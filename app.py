@@ -76,6 +76,7 @@ def send_api():
 
 
 MAX_WORD_RETRIES = 3
+MAX_QUIZ_RETRIES = 3
 
 
 def _call_llm(system_prompt, user_prompt):
@@ -143,37 +144,74 @@ def _generate_words(theme):
     return None
 
 
+def _validate_quizzes(pairs):
+    if not isinstance(pairs, list) or len(pairs) != 8:
+        return False
+    seen_answers = set()
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            return False
+        answer = pair.get("answer", "")
+        if not isinstance(answer, str) or not answer.strip():
+            return False
+        questions = pair.get("questions", [])
+        if not isinstance(questions, list) or len(questions) != 2:
+            return False
+        q0, q1 = questions
+        if not isinstance(q0, str) or not q0.strip():
+            return False
+        if not isinstance(q1, str) or not q1.strip():
+            return False
+        if q0 == q1:
+            return False
+        if answer in seen_answers:
+            return False
+        seen_answers.add(answer)
+    return True
+
+
 def _generate_quizzes(words):
     system_prompt = (
         "あなたはJSONのみを出力します。他のテキストは一切出力しないでください。"
         "コードブロック（```）も使用しないでください。"
     )
-    user_prompt = (
-        f"以下の8つの単語について、各単語に対し答えがその単語になるクイズを2つずつ作ってください。\n"
-        f"対象単語：{json.dumps(words, ensure_ascii=False)}\n"
-        "【規則】\n"
-        "1. 各単語に対しクイズを2つ作る\n"
-        "2. 2つのクイズは質問文を変える\n"
-        "3. クイズは短く簡潔に\n"
-        "【出力形式】\n"
-        '{"pairs":[{"pair_id":1,"answer":"単語","questions":["質問A","質問B"]}]}\n'
-        "上記JSONのみ出力してください。"
-    )
-    raw = _call_llm(system_prompt, user_prompt)
+    for attempt in range(MAX_QUIZ_RETRIES):
+        user_prompt = (
+            f"以下の8つの単語について、各単語に対し答えがその単語になるクイズを2つずつ作ってください。\n"
+            f"対象単語：{json.dumps(words, ensure_ascii=False)}\n"
+            "【規則】\n"
+            "1. 各単語に対しクイズを2つ作る\n"
+            "2. 2つのクイズは質問文を変える\n"
+            "3. クイズは短く簡潔に\n"
+            "4. 2つの問題文は同一にしないこと\n"
+            "【出力形式】\n"
+            '{"pairs":[{"pair_id":1,"answer":"単語","questions":["質問A","質問B"]}]}\n'
+            "上記JSONのみ出力してください。"
+        )
+        try:
+            raw = _call_llm(system_prompt, user_prompt)
+        except Exception as e:
+            app.logger.error(f"Ollama API call failed (attempt {attempt + 1}): {e}")
+            continue
 
-    json_match = re.search(r"\{[\s\S]*\}", raw)
-    if not json_match:
-        app.logger.error(f"Failed to extract JSON from quiz response: {raw}")
-        return None
+        json_match = re.search(r"\{[\s\S]*\}", raw)
+        if not json_match:
+            app.logger.warning(f"Failed to extract JSON from quiz response (attempt {attempt + 1}): {raw}")
+            continue
 
-    try:
-        data = json.loads(json_match.group())
-        pairs = data.get("pairs", [])
-    except (json.JSONDecodeError, KeyError):
-        app.logger.error(f"Invalid JSON from quiz response: {raw}")
-        return None
+        try:
+            data = json.loads(json_match.group())
+            pairs = data.get("pairs", [])
+        except (json.JSONDecodeError, KeyError):
+            app.logger.warning(f"Invalid JSON from quiz response (attempt {attempt + 1}): {raw}")
+            continue
 
-    return pairs
+        if _validate_quizzes(pairs):
+            return pairs
+
+        app.logger.warning(f"Quiz validation failed (attempt {attempt + 1}): {pairs}")
+
+    return None
 
 
 @app.route('/generate_game', methods=['POST'])
@@ -193,25 +231,14 @@ def generate_game():
         app.logger.error(f"Ollama API call failed: {e}")
         return jsonify({"error": "AIサービスとの通信中にエラーが発生しました。"}), 500
 
-    if pairs is None or len(pairs) != 8:
-        app.logger.error(f"Expected 8 quiz pairs, got {len(pairs) if pairs else 0}")
+    if pairs is None:
         return jsonify({"error": "ゲームデータの生成に失敗しました。"}), 500
 
     cards = []
     card_id = 1
     for pair in pairs:
-        questions = pair.get("questions", [])
-        if len(questions) != 2:
-            app.logger.error(f"Pair {pair.get('pair_id')} does not have 2 questions")
-            return jsonify({"error": "ゲームデータの生成に失敗しました。"}), 500
-        answer = pair.get("answer", "")
-        if not answer.strip():
-            app.logger.error(f"Pair {pair.get('pair_id')} has empty answer")
-            return jsonify({"error": "ゲームデータの生成に失敗しました。"}), 500
-        for q in questions:
-            if not q.strip():
-                app.logger.error(f"Pair {pair.get('pair_id')} has empty question")
-                return jsonify({"error": "ゲームデータの生成に失敗しました。"}), 500
+        answer = pair["answer"]
+        for q in pair["questions"]:
             cards.append({"id": card_id, "answer": answer, "text": q})
             card_id += 1
 
