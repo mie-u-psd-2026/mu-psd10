@@ -2,6 +2,7 @@ import json
 import random
 import re
 import uuid
+from datetime import datetime, timezone
 
 from flask import Flask, request, jsonify, send_from_directory
 from openai import OpenAI
@@ -9,8 +10,11 @@ from openai import OpenAI
 app = Flask(__name__)
 
 # Server-side game state
-# {game_id: {"cards": {card_id: answer}, "matched": set(card_id, ...)}}
+# {game_id: {"theme": str, "cards": {card_id: answer}, "matched": set, "started_at": str, "moves": int}}
 games = {}
+
+# Game history (completed games)
+game_history = []
 
 if app.debug:
     @app.after_request
@@ -250,8 +254,11 @@ def generate_game():
 
     game_id = uuid.uuid4().hex
     games[game_id] = {
+        "theme": theme,
         "cards": {c["id"]: c["answer"] for c in cards},
         "matched": set(),
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "moves": 0,
     }
 
     public_cards = [{"id": c["id"], "text": c["text"]} for c in cards]
@@ -283,6 +290,7 @@ def check_pair():
         return jsonify({"error": "このカードはすでにペアが成立しています。"}), 400
 
     is_pair = state["cards"][id1] == state["cards"][id2]
+    state["moves"] += 1
     game_cleared = False
 
     if is_pair:
@@ -290,11 +298,25 @@ def check_pair():
         state["matched"].add(id2)
         game_cleared = len(state["matched"]) == 16
 
+        if game_cleared:
+            game_history.append({
+                "game_id": game_id,
+                "theme": state["theme"],
+                "started_at": state["started_at"],
+                "cleared_at": datetime.now(timezone.utc).isoformat(),
+                "moves": state["moves"],
+            })
+
     return jsonify({
         "is_pair": is_pair,
         "answer": state["cards"][id1] if is_pair else None,
         "game_cleared": game_cleared,
     })
+
+
+@app.route('/game_history', methods=['GET'])
+def get_game_history():
+    return jsonify({"history": list(reversed(game_history))})
 
 
 if __name__ == '__main__':
