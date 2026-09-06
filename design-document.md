@@ -121,7 +121,7 @@ LLMによって異なるクイズが生成されるため、同じお題でも�
 ## 4. システム構成図
 
 フロントエンド、Flaskによるバックエンド、Ollama上で動作するLLMの3つの主要コンポーネントで構成する。
-
+```text
 ┌──────────────────────────────┐
 │          ユーザー             │
 │                              │
@@ -175,6 +175,7 @@ LLMによって異なるクイズが生成されるため、同じお題でも�
 │  ・8個の関連単語を生成         │
 │  ・各単語について2問生成        │
 └──────────────────────────────┘
+```
 ### 4.1 コンポーネント間の連携
 フロントエンド → Flask
 
@@ -232,7 +233,7 @@ Flask → フロントエンド
 - もう一度遊ぶボタン
 
 ### 5.2 画面遷移図
-
+```text
 [お題入力画面]
       ↓
 [ゲーム開始]
@@ -267,7 +268,7 @@ Flask → フロントエンド
                  ↓
            [お題入力画面]
 
-
+```
 ## 6. API仕様
 
 ### 6.1 クイズゲーム生成API
@@ -277,13 +278,13 @@ Flask → フロントエンド
 - Content-Type：`application/json`
 
 #### Request JSON
-
+```text
 {
   "theme": "日本の歴史"
 }
-
+```
 Response JSON
-
+```text
 {
   "game_id": "abc123...",
   "cards": [
@@ -297,7 +298,7 @@ Response JSON
     }
   ]
 }
-
+```
 cardsには16枚のカードが格納される。
 
 ### 6.2ペア判定API仕様
@@ -305,28 +306,36 @@ URL：/check_pair
 Method：POST
 Content-Type：application/json
 Request JSON
+```text
 {
   "game_id": "abc123...",
   "card_ids": [1, 2]
 }
+```
 Response JSON（ペア成立）
+```text
 {
   "is_pair": true,
   "answer": "東京",
   "game_cleared": false
 }
+```
 Response JSON（ペア不成立）
+```text
 {
   "is_pair": false,
   "answer": null,
   "game_cleared": false
 }
+```
 Response JSON（ゲームクリア）
+```text
 {
   "is_pair": true,
   "answer": "東京",
   "game_cleared": true
 }
+```
 - is_pair：2枚のカードが同じ答えに対応するペアかどうか
 - answer：ペア成立時の答え。ペア不成立時はnull
 - game_cleared：8組すべてのペアが成立した場合にtrue
@@ -335,45 +344,61 @@ Response JSON（ゲームクリア）
 APIでエラーが発生した場合は、以下の形式でレスポンスを返す。
 
 Error Response JSON
+```text
 {
   "error": "エラーメッセージ"
 }
+```
 お題未入力
 HTTP Status：400
+```text
 {
   "error": "お題を入力してください。"
 }
+```
 ゲームが存在しない
 HTTP Status：400
+```text
 {
   "error": "ゲームが見つかりません。"
 }
+```
 不正なカードID
 HTTP Status：400
+```text
 {
   "error": "無効なカードIDです。"
 }
+```
 同じカードを選択
+```text
 HTTP Status：400
 {
   "error": "同じカードは選択できません。"
 }
+```
 すでにペアが成立しているカードを選択
 HTTP Status：400
+```text
 {
   "error": "このカードはすでにペアが成立しています。"
 }
+```
 Ollamaとの通信失敗
 HTTP Status：500
+```text
 {
   "error": "AIサービスとの通信中にエラーが発生しました。"
 }
+```
+
 ゲームデータ生成失敗
 HTTP Status：500
+```text
 {
   "error": "ゲームデータの生成に失敗しました。"
 }
-
+```
 ### 6.4 LLMゲームデータ生成仕様
 
 FlaskバックエンドからOllamaへユーザーが入力したお題を送信し、お題に関連する8個の単語を生成する。
@@ -382,12 +407,17 @@ FlaskバックエンドからOllamaへユーザーが入力したお題を送信
 
 #### LLM Request
 
+```text
 お題「日本の歴史」に関連する8つの単語を選び、
 各単語についてクイズを2つずつ作ってください。
 
 各単語に対する2つのクイズは、
 異なる問題文でありながら同じ答えになるようにしてください。
+
+```
 LLM Response JSON
+```text
+
 {
   "pairs": [
     {
@@ -409,6 +439,7 @@ LLM Response JSON
   ]
 }
 
+```
 pairsは8個とし、各pairには以下の情報を設定する。
 
 pair_id：ペアを識別するID
@@ -427,6 +458,8 @@ questions：同じ答えになる2つの異なる問題文
 
 検証に失敗した場合は、LLMにゲームデータの再生成を要求する。
 
+```text
+
 LLMでゲームデータ生成
         ↓
 バックエンドで検証
@@ -438,6 +471,8 @@ LLMでゲームデータ生成
 カード生成   再生成
    ↓         ↓
 ゲーム開始   LLMへ再要求
+
+```
 
 再生成は最大3回までとする。
 
