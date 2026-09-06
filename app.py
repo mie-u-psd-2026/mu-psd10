@@ -8,7 +8,8 @@ from openai import OpenAI
 
 app = Flask(__name__)
 
-# Server-side game state: {game_id: {card_id: answer, ...}}
+# Server-side game state
+# {game_id: {"cards": {card_id: answer}, "matched": set(card_id, ...)}}
 games = {}
 
 if app.debug:
@@ -74,6 +75,107 @@ def send_api():
         return jsonify({"error": f"AIサービスとの通信中にエラーが発生しました。"}), 500
 
 
+MAX_WORD_RETRIES = 3
+
+
+def _call_llm(system_prompt, user_prompt):
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        model=OLLAMA_MODEL,
+    )
+    return chat_completion.choices[0].message.content
+
+
+def _validate_words(words, theme):
+    if not isinstance(words, list):
+        return False
+    if len(words) != 8:
+        return False
+    if any(not isinstance(w, str) or not w.strip() for w in words):
+        return False
+    if len(set(words)) != 8:
+        return False
+    return True
+
+
+def _generate_words(theme):
+    system_prompt = (
+        "あなたはJSONのみを出力します。他のテキストは一切出力しないでください。"
+        "コードブロック（```）も使用しないでください。"
+    )
+    for attempt in range(MAX_WORD_RETRIES):
+        user_prompt = (
+            f"お題「{theme}」に関連する8つの単語を抽出してください。\n"
+            "【規則】\n"
+            "1. お題と関連する具体的な単語を8つ\n"
+            "2. 単語は簡潔に（1語〜数語）\n"
+            "3. 重複しないこと\n"
+            "【出力形式】\n"
+            '{"words":["単語1","単語2","単語3","単語4","単語5","単語6","単語7","単語8"]}\n'
+            "上記JSONのみ出力してください。"
+        )
+        try:
+            raw = _call_llm(system_prompt, user_prompt)
+        except Exception as e:
+            app.logger.error(f"Ollama API call failed (attempt {attempt + 1}): {e}")
+            continue
+
+        json_match = re.search(r"\{[\s\S]*\}", raw)
+        if not json_match:
+            app.logger.warning(f"Failed to extract JSON (attempt {attempt + 1}): {raw}")
+            continue
+
+        try:
+            data = json.loads(json_match.group())
+            words = data.get("words", [])
+        except (json.JSONDecodeError, KeyError):
+            app.logger.warning(f"Invalid JSON (attempt {attempt + 1}): {raw}")
+            continue
+
+        if _validate_words(words, theme):
+            return words
+
+        app.logger.warning(f"Word validation failed (attempt {attempt + 1}): {words}")
+
+    return None
+
+
+def _generate_quizzes(words):
+    system_prompt = (
+        "あなたはJSONのみを出力します。他のテキストは一切出力しないでください。"
+        "コードブロック（```）も使用しないでください。"
+    )
+    user_prompt = (
+        f"以下の8つの単語について、各単語に対し答えがその単語になるクイズを2つずつ作ってください。\n"
+        f"対象単語：{json.dumps(words, ensure_ascii=False)}\n"
+        "【規則】\n"
+        "1. 各単語に対しクイズを2つ作る\n"
+        "2. 2つのクイズは質問文を変える\n"
+        "3. クイズは短く簡潔に\n"
+        "【出力形式】\n"
+        '{"pairs":[{"pair_id":1,"answer":"単語","questions":["質問A","質問B"]}]}\n'
+        "上記JSONのみ出力してください。"
+    )
+    raw = _call_llm(system_prompt, user_prompt)
+
+    json_match = re.search(r"\{[\s\S]*\}", raw)
+    if not json_match:
+        app.logger.error(f"Failed to extract JSON from quiz response: {raw}")
+        return None
+
+    try:
+        data = json.loads(json_match.group())
+        pairs = data.get("pairs", [])
+    except (json.JSONDecodeError, KeyError):
+        app.logger.error(f"Invalid JSON from quiz response: {raw}")
+        return None
+
+    return pairs
+
+
 @app.route('/generate_game', methods=['POST'])
 def generate_game():
     data = request.get_json(silent=True) or {}
@@ -81,49 +183,18 @@ def generate_game():
     if not theme:
         return jsonify({"error": "お題を入力してください。"}), 400
 
-    system_prompt = (
-        "あなたはJSONのみを出力します。説明文は一切出力しないでください。"
-    )
-    user_prompt = (
-        f"お題「{theme}」から関連する8つの単語を選び、"
-        "それぞれについて異なる2つのクイズを生成してください。\n"
-        "【条件】\n"
-        "- 8つの単語はお題に密接に関連するもの\n"
-        "- 各単語について答えがその単語になるクイズを2つ作る\n"
-        "- 2つのクイズは質問文が異なるもの\n"
-        "- クイズは簡潔に（1文程度）\n"
-        "- 以下のJSON形式で出力：\n"
-        '{"pairs":[{"pair_id":1,"answer":"単語","questions":["クイズA","クイズB"]}]}\n'
-        "- 説明やコードブロック不要、JSONのみ出力"
-    )
+    words = _generate_words(theme)
+    if words is None:
+        return jsonify({"error": "単語の生成に失敗しました。もう一度お試しください。"}), 500
 
     try:
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            model=OLLAMA_MODEL,
-        )
-        raw = chat_completion.choices[0].message.content
+        pairs = _generate_quizzes(words)
     except Exception as e:
         app.logger.error(f"Ollama API call failed: {e}")
         return jsonify({"error": "AIサービスとの通信中にエラーが発生しました。"}), 500
 
-    json_match = re.search(r"\{[\s\S]*\}", raw)
-    if not json_match:
-        app.logger.error(f"Failed to extract JSON from LLM response: {raw}")
-        return jsonify({"error": "ゲームデータの生成に失敗しました。"}), 500
-
-    try:
-        game_data = json.loads(json_match.group())
-        pairs = game_data.get("pairs", [])
-    except (json.JSONDecodeError, KeyError):
-        app.logger.error(f"Invalid JSON from LLM: {raw}")
-        return jsonify({"error": "ゲームデータの生成に失敗しました。"}), 500
-
-    if len(pairs) != 8:
-        app.logger.error(f"Expected 8 pairs, got {len(pairs)}")
+    if pairs is None or len(pairs) != 8:
+        app.logger.error(f"Expected 8 quiz pairs, got {len(pairs) if pairs else 0}")
         return jsonify({"error": "ゲームデータの生成に失敗しました。"}), 500
 
     cards = []
@@ -134,7 +205,13 @@ def generate_game():
             app.logger.error(f"Pair {pair.get('pair_id')} does not have 2 questions")
             return jsonify({"error": "ゲームデータの生成に失敗しました。"}), 500
         answer = pair.get("answer", "")
+        if not answer.strip():
+            app.logger.error(f"Pair {pair.get('pair_id')} has empty answer")
+            return jsonify({"error": "ゲームデータの生成に失敗しました。"}), 500
         for q in questions:
+            if not q.strip():
+                app.logger.error(f"Pair {pair.get('pair_id')} has empty question")
+                return jsonify({"error": "ゲームデータの生成に失敗しました。"}), 500
             cards.append({"id": card_id, "answer": answer, "text": q})
             card_id += 1
 
@@ -145,7 +222,10 @@ def generate_game():
     random.shuffle(cards)
 
     game_id = uuid.uuid4().hex
-    games[game_id] = {c["id"]: c["answer"] for c in cards}
+    games[game_id] = {
+        "cards": {c["id"]: c["answer"] for c in cards},
+        "matched": set(),
+    }
 
     public_cards = [{"id": c["id"], "text": c["text"]} for c in cards]
     return jsonify({"game_id": game_id, "cards": public_cards})
@@ -166,14 +246,28 @@ def check_pair():
     id1, id2 = card_ids
     state = games[game_id]
 
-    if id1 not in state or id2 not in state:
+    if id1 not in state["cards"] or id2 not in state["cards"]:
         return jsonify({"error": "無効なカードIDです。"}), 400
 
     if id1 == id2:
         return jsonify({"error": "同じカードは選択できません。"}), 400
 
-    is_pair = state[id1] == state[id2]
-    return jsonify({"is_pair": is_pair, "answer": state[id1] if is_pair else None})
+    if id1 in state["matched"] or id2 in state["matched"]:
+        return jsonify({"error": "このカードはすでにペアが成立しています。"}), 400
+
+    is_pair = state["cards"][id1] == state["cards"][id2]
+    game_cleared = False
+
+    if is_pair:
+        state["matched"].add(id1)
+        state["matched"].add(id2)
+        game_cleared = len(state["matched"]) == 16
+
+    return jsonify({
+        "is_pair": is_pair,
+        "answer": state["cards"][id1] if is_pair else None,
+        "game_cleared": game_cleared,
+    })
 
 
 if __name__ == '__main__':
