@@ -229,18 +229,38 @@ def generate_game():
     if not theme:
         return jsonify({"error": "お題を入力してください。"}), 400
 
+    result = _create_game(theme)
+    if isinstance(result, tuple):
+        return jsonify(result[0]), result[1]
+    return jsonify(result)
+
+
+@app.route('/regenerate_game', methods=['POST'])
+def regenerate_game():
+    data = request.get_json(silent=True) or {}
+    theme = data.get('theme', '').strip()
+    if not theme:
+        return jsonify({"error": "お題を入力してください。"}), 400
+
+    result = _create_game(theme)
+    if isinstance(result, tuple):
+        return jsonify(result[0]), result[1]
+    return jsonify(result)
+
+
+def _create_game(theme):
     words = _generate_words(theme)
     if words is None:
-        return jsonify({"error": "単語の生成に失敗しました。もう一度お試しください。"}), 500
+        return ({"error": "単語の生成に失敗しました。もう一度お試しください。"}, 500)
 
     try:
         pairs = _generate_quizzes(words)
     except Exception as e:
         app.logger.error(f"Ollama API call failed: {e}")
-        return jsonify({"error": "AIサービスとの通信中にエラーが発生しました。"}), 500
+        return ({"error": "AIサービスとの通信中にエラーが発生しました。"}, 500)
 
     if pairs is None:
-        return jsonify({"error": "ゲームデータの生成に失敗しました。"}), 500
+        return ({"error": "ゲームデータの生成に失敗しました。"}, 500)
 
     cards = []
     card_id = 1
@@ -252,7 +272,7 @@ def generate_game():
 
     if len(cards) != 16:
         app.logger.error(f"Expected 16 cards, got {len(cards)}")
-        return jsonify({"error": "ゲームデータの生成に失敗しました。"}), 500
+        return ({"error": "ゲームデータの生成に失敗しました。"}, 500)
 
     random.shuffle(cards)
 
@@ -266,7 +286,7 @@ def generate_game():
     }
 
     public_cards = [{"id": c["id"], "text": c["text"]} for c in cards]
-    return jsonify({"game_id": game_id, "cards": public_cards})
+    return {"game_id": game_id, "cards": public_cards}
 
 
 @app.route('/check_pair', methods=['POST'])
