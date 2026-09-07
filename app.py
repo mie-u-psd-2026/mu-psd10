@@ -94,6 +94,10 @@ def _call_llm(system_prompt, user_prompt):
     return chat_completion.choices[0].message.content
 
 
+def _calculate_score(moves):
+    return max(0, 1000 - (moves - 8) * 10)
+
+
 def _validate_words(words, theme):
     if not isinstance(words, list):
         return False
@@ -292,6 +296,7 @@ def check_pair():
     is_pair = state["cards"][id1] == state["cards"][id2]
     state["moves"] += 1
     game_cleared = False
+    score = None
 
     if is_pair:
         state["matched"].add(id1)
@@ -299,18 +304,21 @@ def check_pair():
         game_cleared = len(state["matched"]) == 16
 
         if game_cleared:
+            score = _calculate_score(state["moves"])
             game_history.append({
                 "game_id": game_id,
                 "theme": state["theme"],
                 "started_at": state["started_at"],
                 "cleared_at": datetime.now(timezone.utc).isoformat(),
                 "moves": state["moves"],
+                "score": score,
             })
 
     return jsonify({
         "is_pair": is_pair,
         "answer": state["cards"][id1] if is_pair else None,
         "game_cleared": game_cleared,
+        "score": score,
     })
 
 
