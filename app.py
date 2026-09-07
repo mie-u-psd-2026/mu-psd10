@@ -156,9 +156,14 @@ def _validate_quizzes(pairs):
     if not isinstance(pairs, list) or len(pairs) != 8:
         return False
     seen_answers = set()
+    seen_pair_ids = set()
     for pair in pairs:
         if not isinstance(pair, dict):
             return False
+        pair_id = pair.get("pair_id")
+        if pair_id in seen_pair_ids:
+            return False
+        seen_pair_ids.add(pair_id)
         answer = pair.get("answer", "")
         if not isinstance(answer, str) or not answer.strip():
             return False
@@ -253,12 +258,7 @@ def _create_game(theme):
     if words is None:
         return ({"error": "単語の生成に失敗しました。もう一度お試しください。"}, 500)
 
-    try:
-        pairs = _generate_quizzes(words)
-    except Exception as e:
-        app.logger.error(f"Ollama API call failed: {e}")
-        return ({"error": "AIサービスとの通信中にエラーが発生しました。"}, 500)
-
+    pairs = _generate_quizzes(words)
     if pairs is None:
         return ({"error": "ゲームデータの生成に失敗しました。"}, 500)
 
