@@ -152,7 +152,7 @@ def _generate_words(theme):
     return None
 
 
-def _validate_quizzes(pairs):
+def _validate_quizzes(pairs, words):
     if not isinstance(pairs, list) or len(pairs) != 8:
         return False
     seen_answers = set()
@@ -180,6 +180,8 @@ def _validate_quizzes(pairs):
         if answer in seen_answers:
             return False
         seen_answers.add(answer)
+    if set(seen_answers) != set(words):
+        return False
     return True
 
 
@@ -219,7 +221,7 @@ def _generate_quizzes(words):
             app.logger.warning(f"Invalid JSON from quiz response (attempt {attempt + 1}): {raw}")
             continue
 
-        if _validate_quizzes(pairs):
+        if _validate_quizzes(pairs, words):
             return pairs
 
         app.logger.warning(f"Quiz validation failed (attempt {attempt + 1}): {pairs}")
@@ -227,12 +229,32 @@ def _generate_quizzes(words):
     return None
 
 
+GAME_TTL_SECONDS = 3600
+
+
+def _cleanup_old_games():
+    now = datetime.now(timezone.utc)
+    expired_ids = []
+    for gid, state in games.items():
+        try:
+            started = datetime.fromisoformat(state["started_at"])
+            if (now - started).total_seconds() > GAME_TTL_SECONDS:
+                expired_ids.append(gid)
+        except (KeyError, ValueError):
+            expired_ids.append(gid)
+    for gid in expired_ids:
+        del games[gid]
+
+
 @app.route('/generate_game', methods=['POST'])
 def generate_game():
+    _cleanup_old_games()
     data = request.get_json(silent=True) or {}
     theme = data.get('theme', '').strip()
     if not theme:
         return jsonify({"error": "お題を入力してください。"}), 400
+    if len(theme) > 50:
+        return jsonify({"error": "お題は50文字以内で入力してください。"}), 400
 
     result = _create_game(theme)
     if isinstance(result, tuple):
@@ -242,10 +264,13 @@ def generate_game():
 
 @app.route('/regenerate_game', methods=['POST'])
 def regenerate_game():
+    _cleanup_old_games()
     data = request.get_json(silent=True) or {}
     theme = data.get('theme', '').strip()
     if not theme:
         return jsonify({"error": "お題を入力してください。"}), 400
+    if len(theme) > 50:
+        return jsonify({"error": "お題は50文字以内で入力してください。"}), 400
 
     result = _create_game(theme)
     if isinstance(result, tuple):
@@ -283,6 +308,7 @@ def _create_game(theme):
         "matched": set(),
         "started_at": datetime.now(timezone.utc).isoformat(),
         "moves": 0,
+        "cleared": False,
     }
 
     public_cards = [{"id": c["id"], "text": c["text"]} for c in cards]
@@ -298,11 +324,15 @@ def check_pair():
     if not game_id or game_id not in games:
         return jsonify({"error": "ゲームが見つかりません。"}), 400
 
+    state = games[game_id]
+
+    if state["cleared"]:
+        return jsonify({"error": "このゲームはすでに終了しています。"}), 400
+
     if not isinstance(card_ids, list) or len(card_ids) != 2:
         return jsonify({"error": "card_idsには2つのカードIDを指定してください。"}), 400
 
     id1, id2 = card_ids
-    state = games[game_id]
 
     if id1 not in state["cards"] or id2 not in state["cards"]:
         return jsonify({"error": "無効なカードIDです。"}), 400
@@ -324,15 +354,22 @@ def check_pair():
         game_cleared = len(state["matched"]) == 16
 
         if game_cleared:
+            state["cleared"] = True
             score = _calculate_score(state["moves"])
+            cleared_at = datetime.now(timezone.utc)
+            started_at = datetime.fromisoformat(state["started_at"])
+            elapsed_seconds = int((cleared_at - started_at).total_seconds())
             game_history.append({
                 "game_id": game_id,
                 "theme": state["theme"],
                 "started_at": state["started_at"],
-                "cleared_at": datetime.now(timezone.utc).isoformat(),
+                "cleared_at": cleared_at.isoformat(),
                 "moves": state["moves"],
                 "score": score,
+                "elapsed_seconds": elapsed_seconds,
             })
+            if len(game_history) > 50:
+                del game_history[:-50]
 
     return jsonify({
         "is_pair": is_pair,
