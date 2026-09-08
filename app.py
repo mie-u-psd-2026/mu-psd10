@@ -38,28 +38,17 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-3.6-flash"
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = "qwen3.5:0.8b"
+OLLAMA_MODEL = "qwen2.5:1.5b"
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-WORDS_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "words": {
-            "type": "array",
-            "items": {"type": "string"},
-            "minItems": 8,
-            "maxItems": 8,
-        }
-    },
-    "required": ["words"],
-}
-
-QUIZ_SCHEMA = {
+GAME_SCHEMA = {
     "type": "object",
     "properties": {
         "pairs": {
             "type": "array",
+            "minItems": 8,
+            "maxItems": 8,
             "items": {
                 "type": "object",
                 "properties": {
@@ -67,15 +56,13 @@ QUIZ_SCHEMA = {
                     "answer": {"type": "string"},
                     "questions": {
                         "type": "array",
-                        "items": {"type": "string"},
                         "minItems": 2,
                         "maxItems": 2,
+                        "items": {"type": "string"},
                     },
                 },
                 "required": ["pair_id", "answer", "questions"],
             },
-            "minItems": 8,
-            "maxItems": 8,
         }
     },
     "required": ["pairs"],
@@ -101,12 +88,13 @@ def _call_gemini(prompt, response_schema=None):
     return response.text
 
 
-def _call_ollama(prompt):
+def _call_ollama(prompt, temperature=0.2):
     url = f"{OLLAMA_BASE_URL}/api/chat"
     payload = {
         "model": OLLAMA_MODEL,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
+        "options": {"temperature": temperature},
     }
     http_client = httpx.Client(timeout=60.0)
     try:
@@ -136,136 +124,257 @@ def _calculate_score(moves):
 
 # --- Validation ---
 
-def _validate_words(words, theme):
-    if not isinstance(words, list):
+def _validate_game_data(data):
+    if not isinstance(data, dict):
+        app.logger.warning("Validation failed: response is not a dict")
         return False
-    if len(words) != 8:
+    pairs = data.get("pairs")
+    if not isinstance(pairs, list):
+        app.logger.warning("Validation failed: pairs is not a list")
         return False
-    if any(not isinstance(w, str) or not w.strip() for w in words):
+    if len(pairs) != 8:
+        app.logger.warning(f"Validation failed: pairs count is {len(pairs)}, expected 8")
         return False
-    if len(set(words)) != 8:
-        return False
-    return True
-
-
-def _validate_quizzes(pairs, words):
-    if not isinstance(pairs, list) or len(pairs) != 8:
-        return False
-    seen_answers = set()
     seen_pair_ids = set()
-    for pair in pairs:
+    seen_answers = set()
+    for i, pair in enumerate(pairs):
         if not isinstance(pair, dict):
+            app.logger.warning(f"Validation failed: pair {i} is not a dict")
             return False
         pair_id = pair.get("pair_id")
+        if not isinstance(pair_id, int) or pair_id < 1 or pair_id > 8:
+            app.logger.warning(f"Validation failed: pair {i} has invalid pair_id: {pair_id}")
+            return False
         if pair_id in seen_pair_ids:
+            app.logger.warning(f"Validation failed: duplicate pair_id {pair_id}")
             return False
         seen_pair_ids.add(pair_id)
         answer = pair.get("answer", "")
         if not isinstance(answer, str) or not answer.strip():
+            app.logger.warning(f"Validation failed: pair {i} has empty answer")
             return False
+        if answer in seen_answers:
+            app.logger.warning(f"Validation failed: duplicate answer '{answer}'")
+            return False
+        seen_answers.add(answer)
         questions = pair.get("questions", [])
         if not isinstance(questions, list) or len(questions) != 2:
+            app.logger.warning(f"Validation failed: pair {i} has {len(questions)} questions, expected 2")
             return False
         q0, q1 = questions
         if not isinstance(q0, str) or not q0.strip():
+            app.logger.warning(f"Validation failed: pair {i} question[0] is empty")
             return False
         if not isinstance(q1, str) or not q1.strip():
+            app.logger.warning(f"Validation failed: pair {i} question[1] is empty")
             return False
         if q0 == q1:
+            app.logger.warning(f"Validation failed: pair {i} has duplicate questions")
             return False
-        if answer in seen_answers:
-            return False
-        seen_answers.add(answer)
-    if set(seen_answers) != set(words):
-        return False
     return True
 
 
-# --- Word Generation ---
+# --- Game Data Generation (single call) ---
 
-def _generate_words(theme):
+def _generate_game_data(theme):
     prompt = (
-        f"お題「{theme}」に関連する8つの単語を抽出してください。\n"
-        "【規則】\n"
-        "1. お題と関連する具体的な単語を8つ\n"
-        "2. 単語は簡潔に（1語〜数語）\n"
-        "3. 重複しないこと\n"
+        f"お題「{theme}」について、神経衰弱ゲームのデータを生成してください。\n\n"
+        "【厳守事項】\n"
+        "- JSONのみ出力してください。説明文・Markdown・コードブロックは一切不要です。\n"
+        "- pairsは必ず8個生成してください。\n"
+        "- 各pairのquestionsは必ず2個にしてください。\n"
+        "- answerは8個すべて異なるものにしてください。\n"
+        "- 2つのquestionsは異なる表現・聞き方にしてください。\n"
+        "- 質問は短く具体的にしてください。曖昧で複数の答えが考えられる質問は避けてください。\n"
+        "- お題から大きく外れた内容は生成しないでください。\n"
+        "- pair_idは1〜8の整数にしてください。\n"
+        "- 余計なフィールドは生成しないでください。\n\n"
+        "【出力形式】\n"
+        '{"pairs":[{"pair_id":1,"answer":"回答","questions":["質問A","質問B"]}]}\n'
     )
 
-    # Try Gemini first
+    # Try Gemini (single call, no retry)
     if gemini_client:
-        for attempt in range(MAX_WORD_RETRIES):
-            try:
-                result = _call_gemini(prompt, response_schema=WORDS_SCHEMA)
-                words = result.get("words", []) if isinstance(result, dict) else []
-            except Exception as e:
-                app.logger.error(f"Gemini API call failed (attempt {attempt + 1}): {e}")
-                continue
-            if _validate_words(words, theme):
-                app.logger.info("Using Gemini API")
-                return words
-            app.logger.warning(f"Gemini word validation failed (attempt {attempt + 1}): {words}")
-        app.logger.warning("Gemini unavailable, falling back to Ollama")
-
-    # Fallback to Ollama
-    for attempt in range(MAX_WORD_RETRIES):
         try:
-            raw = _call_ollama(prompt)
-            data = _parse_json_from_text(raw)
-            words = data.get("words", []) if isinstance(data, dict) else []
+            result = _call_gemini(prompt, response_schema=GAME_SCHEMA)
+            if _validate_game_data(result):
+                app.logger.info("Using Gemini API")
+                return result.get("pairs", [])
+            app.logger.warning("Gemini response validation failed")
         except Exception as e:
-            app.logger.error(f"Ollama API call failed (attempt {attempt + 1}): {e}")
-            continue
-        if _validate_words(words, theme):
-            app.logger.info(f"Using Ollama model {OLLAMA_MODEL}")
-            return words
-        app.logger.warning(f"Ollama word validation failed (attempt {attempt + 1}): {words}")
+            app.logger.warning(f"Gemini API failed: {e}")
 
+    # Fallback to Ollama (step-by-step generation)
+    return _generate_game_data_with_ollama(theme)
+
+
+def _generate_game_data_with_ollama(theme):
+    app.logger.info(f"Using Ollama model {OLLAMA_MODEL}")
+
+    # Step 1: Generate 8 answers one by one
+    answers = []
+    for i in range(8):
+        answer = _ollama_generate_one_answer(theme, answers)
+        if answer is None:
+            app.logger.warning(f"Ollama failed to generate answer {i + 1}")
+            return None
+        answers.append(answer)
+
+    # Step 2: Generate 2 questions per answer (1 question at a time)
+    pairs = []
+    for i, answer in enumerate(answers):
+        q1 = _ollama_generate_question_1(theme, answer)
+        if q1 is None:
+            app.logger.warning(f"Ollama failed to generate question 1 for answer '{answer}'")
+            return None
+        q2 = _ollama_generate_question_2(theme, answer, q1)
+        if q2 is None:
+            app.logger.warning(f"Ollama failed to generate question 2 for answer '{answer}'")
+            return None
+        pairs.append({
+            "pair_id": i + 1,
+            "answer": answer,
+            "questions": [q1, q2],
+        })
+
+    return pairs
+
+
+MAX_ANSWER_RETRIES = 3
+MAX_QUESTION_RETRIES = 3
+
+
+def _normalize_for_comparison(text):
+    import unicodedata
+    import string
+    normalized = unicodedata.normalize("NFKC", text)
+    normalized = normalized.translate(
+        str.maketrans("", "", string.punctuation + "　、。！？「」（）")
+    )
+    return normalized.strip().lower()
+
+
+def _ollama_generate_one_answer(theme, existing_answers):
+    existing_text = ""
+    if existing_answers:
+        existing_text = (
+            f"\nすでに使用した答え：{', '.join(existing_answers)}\n"
+            "上記とは異なる答えを生成してください。"
+        )
+    prompt = (
+        f"あなたはクイズゲームの答えを1つだけ生成するAIです。\n\n"
+        f"お題：\n「{theme}」\n"
+        f"{existing_text}\n"
+        f"上記のお題に直接関係し、すでに使用した答えとは異なる具体的な答えを1つだけ生成してください。\n\n"
+        "【絶対条件】\n"
+        "- 答えは1つだけ\n"
+        "- お題に直接関係するもの\n"
+        "- 既に使用した答えと同じものは禁止\n"
+        "- お題と無関係なものは禁止\n"
+        "- 説明は禁止\n"
+        "- 前置きは禁止\n"
+        "- JSONのみ出力\n\n"
+        "【出力形式】\n"
+        '{"answer":"単語"}\n'
+    )
+    for attempt in range(MAX_ANSWER_RETRIES):
+        try:
+            raw = _call_ollama(prompt, temperature=0.2)
+            data = _parse_json_from_text(raw)
+            answer = data.get("answer", "") if isinstance(data, dict) else ""
+        except Exception as e:
+            app.logger.error(f"Ollama answer generation failed (attempt {attempt + 1}): {e}")
+            continue
+        if (isinstance(answer, str) and answer.strip()
+                and answer.strip() not in existing_answers):
+            return answer.strip()
+        app.logger.warning(
+            f"Ollama answer rejected (attempt {attempt + 1}): "
+            f"'{answer}' (empty={not answer.strip()}, "
+            f"duplicate={answer.strip() in existing_answers})"
+        )
     return None
 
 
-# --- Quiz Generation ---
-
-def _generate_quizzes(words):
+def _ollama_generate_question_1(theme, answer):
     prompt = (
-        f"以下の8つの単語について、各単語に対し答えがその単語になるクイズを2つずつ作ってください。\n"
-        f"対象単語：{json.dumps(words, ensure_ascii=False)}\n"
-        "【規則】\n"
-        "1. 各単語に対しクイズを2つ作る\n"
-        "2. 2つのクイズは質問文を変える\n"
-        "3. クイズは短く簡潔に\n"
-        "4. 2つの問題文は同一にしないこと\n"
+        f"あなたはクイズゲームの問題作成AIです。\n\n"
+        f"お題：\n「{theme}」\n\n"
+        f"正解：\n「{answer}」\n\n"
+        f"上記の「{answer}」が正解になる問題を1問だけ作成してください。\n\n"
+        "【絶対条件】\n"
+        "- 問題は1問だけ\n"
+        "- 正解は必ず「{answer}」\n"
+        "- 問題文に「{answer}」という文字を含めない\n"
+        f"- お題「{theme}」に直接関係する内容にする\n"
+        "- プレイヤー個人の経験を質問する問題は禁止\n"
+        "- 正解が客観的に決まる問題にする\n"
+        "- 複数の答えが成立する曖昧な問題は禁止\n"
+        "- JSONのみ出力\n"
+        "- 説明文は禁止\n\n"
+        "【出力形式】\n"
+        '{"question":"問題文"}\n'
     )
-
-    # Try Gemini first
-    if gemini_client:
-        for attempt in range(MAX_QUIZ_RETRIES):
-            try:
-                result = _call_gemini(prompt, response_schema=QUIZ_SCHEMA)
-                pairs = result.get("pairs", []) if isinstance(result, dict) else []
-            except Exception as e:
-                app.logger.error(f"Gemini API call failed (attempt {attempt + 1}): {e}")
-                continue
-            if _validate_quizzes(pairs, words):
-                app.logger.info("Using Gemini API")
-                return pairs
-            app.logger.warning(f"Gemini quiz validation failed (attempt {attempt + 1}): {pairs}")
-        app.logger.warning("Gemini unavailable, falling back to Ollama")
-
-    # Fallback to Ollama
-    for attempt in range(MAX_QUIZ_RETRIES):
+    for attempt in range(MAX_QUESTION_RETRIES):
         try:
-            raw = _call_ollama(prompt)
+            raw = _call_ollama(prompt, temperature=0.2)
             data = _parse_json_from_text(raw)
-            pairs = data.get("pairs", []) if isinstance(data, dict) else []
+            q = data.get("question", "") if isinstance(data, dict) else ""
         except Exception as e:
-            app.logger.error(f"Ollama API call failed (attempt {attempt + 1}): {e}")
+            app.logger.error(
+                f"Ollama question 1 generation failed for '{answer}' "
+                f"(attempt {attempt + 1}): {e}"
+            )
             continue
-        if _validate_quizzes(pairs, words):
-            app.logger.info(f"Using Ollama model {OLLAMA_MODEL}")
-            return pairs
-        app.logger.warning(f"Ollama quiz validation failed (attempt {attempt + 1}): {pairs}")
+        if isinstance(q, str) and q.strip():
+            return q.strip()
+        app.logger.warning(
+            f"Ollama question 1 validation failed for '{answer}' "
+            f"(attempt {attempt + 1}): '{q}'"
+        )
+    return None
 
+
+def _ollama_generate_question_2(theme, answer, existing_question):
+    prompt = (
+        f"あなたはクイズゲームの問題作成AIです。\n\n"
+        f"お題：\n「{theme}」\n\n"
+        f"正解：\n「{answer}」\n\n"
+        f"既に生成した問題：\n「{existing_question}」\n\n"
+        f"上記の「{answer}」が正解になる問題を、既に生成した問題とは異なる内容で1問だけ作成してください。\n\n"
+        "【絶対条件】\n"
+        "- 問題は1問だけ\n"
+        "- 正解は必ず「{answer}」\n"
+        "- 問題文に「{answer}」という文字を含めない\n"
+        f"- お題「{theme}」に直接関係する内容にする\n"
+        "- 既に生成した問題と内容が重複しない\n"
+        "- プレイヤー個人の経験を質問する問題は禁止\n"
+        "- 正解が客観的に決まる問題にする\n"
+        "- 複数の答えが成立する曖昧な問題は禁止\n"
+        "- JSONのみ出力\n"
+        "- 説明文は禁止\n\n"
+        "【出力形式】\n"
+        '{"question":"問題文"}\n'
+    )
+    for attempt in range(MAX_QUESTION_RETRIES):
+        try:
+            raw = _call_ollama(prompt, temperature=0.2)
+            data = _parse_json_from_text(raw)
+            q = data.get("question", "") if isinstance(data, dict) else ""
+        except Exception as e:
+            app.logger.error(
+                f"Ollama question 2 generation failed for '{answer}' "
+                f"(attempt {attempt + 1}): {e}"
+            )
+            continue
+        if (isinstance(q, str) and q.strip()
+                and _normalize_for_comparison(q) != _normalize_for_comparison(existing_question)):
+            return q.strip()
+        app.logger.warning(
+            f"Ollama question 2 rejected for '{answer}' "
+            f"(attempt {attempt + 1}): '{q}' "
+            f"(duplicate={_normalize_for_comparison(q) == _normalize_for_comparison(existing_question)})"
+        )
     return None
 
 
@@ -336,10 +445,6 @@ def send_api():
         return jsonify({"error": "Gemini APIとOllamaのどちらも利用できないため、応答を生成できませんでした。"}), 500
 
 
-MAX_WORD_RETRIES = 3
-MAX_QUIZ_RETRIES = 3
-
-
 @app.route('/generate_game', methods=['POST'])
 def generate_game():
     _cleanup_old_games()
@@ -373,11 +478,7 @@ def regenerate_game():
 
 
 def _create_game(theme):
-    words = _generate_words(theme)
-    if words is None:
-        return ({"error": "Gemini APIとOllamaのどちらも利用できないため、ゲームを生成できませんでした。"}, 500)
-
-    pairs = _generate_quizzes(words)
+    pairs = _generate_game_data(theme)
     if pairs is None:
         return ({"error": "Gemini APIとOllamaのどちらも利用できないため、ゲームを生成できませんでした。"}, 500)
 
