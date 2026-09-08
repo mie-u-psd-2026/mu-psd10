@@ -1,5 +1,34 @@
 # 生成AI活用サンプルアプリ
 
+## Linux / VS Codeでのセットアップ
+
+このリポジトリは、Python 3.12以降とOllamaを使ってローカル開発できます。
+
+```bash
+cd mu-psd10
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+cp .env.example .env
+```
+
+`.env` に `GEMINI_API_KEY` を設定しない場合は、Ollamaがフォールバックとして使用されます。Ollamaを使う場合は別ターミナルで起動し、モデルを取得してください。
+
+```bash
+ollama serve
+ollama pull qwen2.5:1.5b
+```
+
+Flaskアプリは次のコマンドで起動します。
+
+```bash
+source .venv/bin/activate
+python app.py
+```
+
+ブラウザで http://localhost:5000/ を開いてください。VS Codeでは、推奨拡張機能をインストールすると、`.venv` が自動選択され、F5でデバッグ起動できます。
+
 # 概要
 
 このアプリは Python とVue.jsを用いて作られた簡易的な生成AI活用アプリです。

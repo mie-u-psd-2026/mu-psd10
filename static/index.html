@@ -1,79 +1,343 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sample Application</title>
-    <!-- Vue.jsをCDNから読み込み -->
+    <title>ことば合わせ</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <!-- BootStrapをCDNから読み込み -->
-	<link rel="stylesheet" href="//cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css">
+    <style>
+        :root {
+            --ink: #17221d;
+            --muted: #68766d;
+            --paper: #f5f1e8;
+            --green: #236b52;
+            --gold: #e3a72f;
+            --line: #d9d7c9;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            color: var(--ink);
+            background: radial-gradient(circle at 85% 0%, #f0d98d 0, transparent 28%), var(--paper);
+            font-family: Georgia, "Noto Serif JP", serif;
+        }
+
+        button,
+        input {
+            font: inherit;
+        }
+
+        button {
+            cursor: pointer;
+        }
+
+        .shell {
+            width: min(1080px, calc(100% - 32px));
+            margin: auto;
+            padding: 42px 0 64px;
+        }
+
+        header {
+            display: flex;
+            align-items: end;
+            justify-content: space-between;
+            gap: 24px;
+            margin-bottom: 30px;
+        }
+
+        .eyebrow {
+            color: var(--green);
+            font: 700 12px system-ui;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        h1 {
+            margin: 8px 0 0;
+            font-size: clamp(2.5rem, 7vw, 5.5rem);
+            line-height: .92;
+            font-weight: 500;
+        }
+
+        h2 {
+            margin: 0;
+            font-size: clamp(1.4rem, 3vw, 2.1rem);
+            font-weight: 500;
+        }
+
+        .intro {
+            max-width: 440px;
+            color: var(--muted);
+            line-height: 1.8;
+        }
+
+        .panel {
+            border-top: 1px solid var(--ink);
+            padding-top: 22px;
+        }
+
+        .start {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 12px;
+            align-items: end;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--muted);
+            font: 700 12px system-ui;
+            letter-spacing: 1px;
+        }
+
+        input {
+            width: 100%;
+            padding: 15px 16px;
+            border: 1px solid var(--line);
+            border-radius: 4px;
+            background: #fffdf8;
+            color: var(--ink);
+            font-size: 1.05rem;
+        }
+
+        .primary {
+            padding: 15px 25px;
+            border: 0;
+            border-radius: 4px;
+            background: var(--green);
+            color: white;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .primary:disabled {
+            opacity: .55;
+            cursor: wait;
+        }
+
+        .error {
+            margin: 18px 0 0;
+            padding: 12px 14px;
+            border-left: 4px solid #a44235;
+            background: #f8dfd8;
+            color: #713126;
+        }
+
+        .game-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            margin: 42px 0 18px;
+        }
+
+        .stats {
+            display: flex;
+            gap: 18px;
+            color: var(--muted);
+            font: 700 13px system-ui;
+        }
+
+        .board {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+        }
+
+        .card {
+            min-height: 142px;
+            padding: 16px;
+            border: 1px solid #d5c9a5;
+            border-radius: 5px;
+            background: #fffdf8;
+            color: var(--ink);
+            text-align: left;
+            box-shadow: 3px 4px 0 #ded4b9;
+            transition: transform .15s;
+        }
+
+        .card:hover:not(:disabled) {
+            transform: translateY(-3px);
+        }
+
+        .card:disabled {
+            cursor: default;
+        }
+
+        .card.back {
+            display: grid;
+            place-items: center;
+            background: var(--green);
+            color: #eef2db;
+            font-size: 2rem;
+            box-shadow: 3px 4px 0 #174735;
+        }
+
+        .card.selected {
+            outline: 3px solid var(--gold);
+            background: #fff4c9;
+        }
+
+        .card.matched {
+            border-color: var(--green);
+            background: #dcebd5;
+            box-shadow: none;
+        }
+
+        .card-number {
+            display: block;
+            margin-bottom: 15px;
+            color: var(--gold);
+            font: 700 12px system-ui;
+        }
+
+        .card-text {
+            font-size: 1rem;
+            line-height: 1.55;
+        }
+
+        .message {
+            min-height: 28px;
+            margin: 17px 0;
+            color: var(--green);
+            font-weight: 700;
+        }
+
+        .clear {
+            padding: 23px;
+            border: 1px solid var(--gold);
+            background: #fff4c9;
+        }
+
+        .clear strong {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 1.5rem;
+        }
+
+        .history {
+            margin-top: 48px;
+        }
+
+        .history h2 {
+            margin-bottom: 12px;
+        }
+
+        .history-list {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px 24px;
+            padding: 0;
+            list-style: none;
+        }
+
+        .history-list li {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--line);
+            color: var(--muted);
+            font: 14px system-ui;
+        }
+
+        @media (max-width:680px) {
+            .shell {
+                padding-top: 26px;
+            }
+
+            header {
+                display: block;
+            }
+
+            .intro {
+                margin-top: 20px;
+            }
+
+            .start {
+                grid-template-columns: 1fr;
+            }
+
+            .board {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 9px;
+            }
+
+            .card {
+                min-height: 150px;
+            }
+
+            .game-head {
+                display: block;
+            }
+
+            .stats {
+                margin-top: 10px;
+            }
+
+            .history-list {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
 </head>
+
 <body>
-
-    <div id="app" class="container">
-        <h2 class="mb-4">サンプルアプリ</h2>
-
-        <div class="mb-3">
-            <label for="inputText" class="form-label">テキストを入力してください:</label>
-            <textarea id="inputText" class="form-control" rows="5" v-model="inputText" placeholder="ここにテキストを入力..."></textarea>
-        </div>
-
-        <div class="mb-3">
-            <button @click="execute" class="btn btn-primary">実行</button>
-            <button @click="execute_kansai" class="btn btn-success ms-2">関西弁で実行</button>
-        </div>
-        
-        <h3>結果:</h3>
-        <div class="result-area p-3 border rounded" :class="{ 'alert alert-info': resultText && !resultText.startsWith('エラー:'), 'alert alert-danger': resultText.startsWith('エラー:') }">
-            <pre style="white-space: pre-wrap;">{{ resultText }}</pre>
-        </div>
-    </div>
-
+    <main id="app" class="shell">
+        <header>
+            <div>
+                <div class="eyebrow">Quiz memory game</div>
+                <h1>ことば<br>合わせ</h1>
+            </div>
+            <p class="intro">同じ答えにつながる、異なる2つの問題を探そう。テーマを決めると、AIが16枚のカードを用意します。</p>
+        </header>
+        <section class="panel">
+            <div class="start">
+                <div><label for="theme">今日のテーマ</label><input id="theme" v-model.trim="theme" maxlength="50"
+                        @keyup.enter="startGame" placeholder="例：日本の歴史、宇宙、動物"></div><button class="primary"
+                    @click="startGame" :disabled="loading || !theme">{{ loading ? 'カードを準備中...' : 'ゲームを始める' }}</button>
+            </div>
+            <p v-if="error" class="error" role="alert">{{ error }}</p>
+        </section>
+        <section v-if="cards.length" aria-live="polite">
+            <div class="game-head">
+                <h2>テーマ：{{ currentTheme }}</h2>
+                <div class="stats"><span>手数 {{ moves }}</span><span>ペア {{ matched.size / 2 }} / 8</span></div>
+            </div>
+            <div class="board"><button v-for="card in cards" :key="card.id" class="card"
+                    :class="{ back: !isVisible(card), selected: selected.includes(card.id), matched: matched.has(card.id) }"
+                    :disabled="isDisabled(card)" @click="selectCard(card)"><template v-if="isVisible(card)"><span
+                            class="card-number">CARD {{ String(card.id).padStart(2, '0') }}</span><span
+                            class="card-text">{{ card.text }}</span></template><span v-else>＋</span></button></div>
+            <p class="message">{{ message }}</p>
+            <div v-if="cleared" class="clear"><strong>ゲームクリア</strong><span>{{ moves }}手で完成。スコア {{ score }}
+                    点</span><br><button class="primary" style="margin-top:14px" @click="startGame">もう一度遊ぶ</button></div>
+        </section>
+        <section v-if="history.length" class="history">
+            <h2>プレイ履歴</h2>
+            <ul class="history-list">
+                <li v-for="item in history" :key="item.game_id"><span>{{ item.theme }}</span><strong>{{ item.score }} 点
+                        / {{ item.moves }}手</strong></li>
+            </ul>
+        </section>
+    </main>
     <script>
         const { createApp } = Vue;
-
         createApp({
-            data() {
-                return {
-                    inputText: '',
-                    resultText: 'ここに結果が表示されます。'
-                };
-            },
+            data() { return { theme: '', currentTheme: '', cards: [], selected: [], matched: new Set(), gameId: '', moves: 0, score: 0, cleared: false, loading: false, error: '', message: 'カードを2枚選んでください。', history: [] }; }, mounted() { this.loadHistory(); },
             methods: {
-                async sendRequest(context = null) {
-                    this.resultText = '処理中...';
-                    try {
-                        const payload = { text: this.inputText };
-                        if (context) {
-                            payload.context = context;
-                        }
-
-                        const response = await fetch('/send_api', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify(payload)
-                        });
-                        const data = await response.json();
-                        if (response.ok) {
-                            this.resultText = data.processed_text;
-                        } else {
-                            this.resultText = `エラー: ${data.error || '不明なエラーが発生しました。'}`;
-                        }
-                    } catch (error) {
-                        this.resultText = `エラー: ${error.message}`;
-                    }
-                },
-                execute() {
-                    this.sendRequest();
-                },
-                execute_kansai() {
-                    this.sendRequest("あなたは親切な関西人です。ユーザーからの入力に対して、必ず関西弁で、親しみやすく、そして140字以内で回答してください。");
-                }
+                async request(url, payload) { const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || '処理に失敗しました。'); return data; },
+                async startGame() { if (!this.theme || this.loading) return; this.loading = true; this.error = ''; this.cards = []; try { const data = await this.request('/generate_game', { theme: this.theme }); this.currentTheme = this.theme; this.gameId = data.game_id; this.cards = data.cards; this.selected = []; this.matched = new Set(); this.moves = 0; this.cleared = false; this.message = 'カードを2枚選んでください。'; } catch (error) { this.error = error.message; } finally { this.loading = false; } },
+                isVisible(card) { return this.matched.has(card.id) || this.selected.includes(card.id); }, isDisabled(card) { return this.cleared || this.matched.has(card.id) || this.selected.includes(card.id) || this.selected.length >= 2; },
+                async selectCard(card) { if (this.isDisabled(card)) return; this.selected.push(card.id); if (this.selected.length !== 2) { this.message = 'もう1枚選んでください。'; return; } const chosen = [...this.selected]; try { const result = await this.request('/check_pair', { game_id: this.gameId, card_ids: chosen }); this.moves = result.moves; if (result.is_pair) { chosen.forEach(id => this.matched.add(id)); this.message = `ペア成立：${result.answer}`; this.cleared = result.game_cleared; if (this.cleared) { this.score = result.score; await this.loadHistory(); } this.selected = []; } else { this.message = '不成立。カードを裏返します。'; setTimeout(() => { this.selected = []; this.message = 'カードを2枚選んでください。'; }, 800); } } catch (error) { this.error = error.message; this.selected = []; } },
+                async loadHistory() { try { const response = await fetch('/game_history'); const data = await response.json(); this.history = data.history || []; } catch (_) { this.history = []; } }
             }
         }).mount('#app');
     </script>
 </body>
+
 </html>
