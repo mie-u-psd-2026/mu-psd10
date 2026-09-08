@@ -35,7 +35,11 @@ if app.debug:
 # --- LLM Configuration ---
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_MODEL = "gemini-3.6-flash"
+GEMINI_MODELS = [
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+]
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = "qwen2.5:1.5b"
@@ -71,21 +75,37 @@ GAME_SCHEMA = {
 
 # --- LLM Call Layer ---
 
-def _call_gemini(prompt, response_schema=None):
+def _call_gemini(prompt, response_schema=None, model_name=None):
     if not gemini_client:
         raise RuntimeError("Gemini APIキーが設定されていません。")
+    model = model_name or GEMINI_MODELS[0]
     config = types.GenerateContentConfig(temperature=1.0)
     if response_schema:
         config.response_mime_type = "application/json"
         config.response_json_schema = response_schema
     response = gemini_client.models.generate_content(
-        model=GEMINI_MODEL,
+        model=model,
         contents=prompt,
         config=config,
     )
     if response_schema:
         return response.parsed
     return response.text
+
+
+def _is_gemini_rate_limit_error(exc):
+    error_str = str(exc).lower()
+    if "429" in error_str:
+        return True
+    if "resource_exhausted" in error_str:
+        return True
+    if "quota" in error_str:
+        return True
+    if "rate limit" in error_str or "rate-limit" in error_str:
+        return True
+    if "too many requests" in error_str:
+        return True
+    return False
 
 
 def _call_ollama(prompt, temperature=0.2, response_format=None):
@@ -195,53 +215,80 @@ def _generate_game_data(theme):
         '{"pairs":[{"pair_id":1,"answer":"回答","questions":["質問A","質問B"]}]}\n'
     )
 
-    # Try Gemini (single call, no retry)
+    # Try Gemini models in order
     if gemini_client:
-        try:
-            result = _call_gemini(prompt, response_schema=GAME_SCHEMA)
-            if _validate_game_data(result):
-                app.logger.info("Using Gemini API")
-                return result.get("pairs", [])
-            app.logger.warning("Gemini response validation failed")
-        except Exception as e:
-            app.logger.warning(f"Gemini API failed: {e}")
+        for model_name in GEMINI_MODELS:
+            app.logger.info(f"Using Gemini model: {model_name}")
+            try:
+                result = _call_gemini(prompt, response_schema=GAME_SCHEMA, model_name=model_name)
+                if _validate_game_data(result):
+                    app.logger.info(f"Gemini model {model_name} succeeded")
+                    return result.get("pairs", [])
+                app.logger.warning(f"Gemini model {model_name} response validation failed")
+            except Exception as e:
+                if _is_gemini_rate_limit_error(e):
+                    app.logger.warning(
+                        f"Gemini model {model_name} rate limit reached, trying next model"
+                    )
+                else:
+                    app.logger.warning(f"Gemini model {model_name} failed: {e}")
+                continue
+        app.logger.warning("All Gemini models failed, falling back to Ollama")
+    else:
+        app.logger.warning("GEMINI_API_KEY is not configured, using Ollama")
 
-    # Fallback to Ollama (step-by-step generation)
+    # Fallback to Ollama
     return _generate_game_data_with_ollama(theme)
 
 
 def _generate_game_data_with_ollama(theme):
     app.logger.info(f"Using Ollama model {OLLAMA_MODEL}")
 
-    # Step 1: Generate candidate answers (20 at once) and select 8 unique
-    answers = _ollama_generate_answers(theme)
-    if answers is None:
+    # Step 1: Generate candidate answers (20 at once)
+    all_answers = _ollama_generate_answers(theme)
+    if all_answers is None:
         return None
 
-    # Step 2: Generate 2 questions per answer (1 question at a time)
+    # Step 2: Try each answer until we have 8 pairs
     pairs = []
-    for i, answer in enumerate(answers):
-        q1 = _ollama_generate_question_1(theme, answer)
-        if q1 is None:
-            app.logger.warning(f"Ollama failed to generate question 1 for answer '{answer}'")
-            return None
-        q2 = _ollama_generate_question_2(theme, answer, q1)
-        if q2 is None:
-            app.logger.warning(f"Ollama failed to generate question 2 for answer '{answer}'")
-            return None
-        pairs.append({
-            "pair_id": i + 1,
-            "answer": answer,
-            "questions": [q1, q2],
-        })
+    for answer in all_answers:
+        if len(pairs) >= REQUIRED_ANSWERS:
+            break
 
+        app.logger.info(f"Ollama answer candidate: {answer}")
+
+        # Step 2a: Generate question candidates
+        candidates = _ollama_generate_question_candidates(theme, answer)
+        if candidates is None:
+            continue
+
+        # Step 2b: Validate and select 2 questions
+        selected = _select_questions(candidates, answer)
+        if selected is None:
+            continue
+
+        pairs.append({
+            "pair_id": len(pairs) + 1,
+            "answer": answer,
+            "questions": selected,
+        })
+        app.logger.info(f"Ollama pair completed: {answer}")
+
+    if len(pairs) < REQUIRED_ANSWERS:
+        app.logger.warning(
+            f"Ollama failed to generate {REQUIRED_ANSWERS} pairs, got {len(pairs)}"
+        )
+        return None
+
+    app.logger.info(f"Ollama successfully generated {len(pairs)}/{REQUIRED_ANSWERS} pairs")
     return pairs
 
 
 MAX_CANDIDATE_RETRIES = 3
-MAX_QUESTION_RETRIES = 3
+MAX_QUESTION_CANDIDATE_RETRIES = 3
 REQUIRED_ANSWERS = 8
 CANDIDATE_POOL_SIZE = 20
+QUESTION_CANDIDATE_COUNT = 8
 
 
 def _normalize_for_comparison(text):
@@ -273,6 +320,7 @@ def _ollama_generate_answers(theme):
             "【絶対条件】\n"
             f"- お題「{theme}」に直接関係する具体的な単語または固有名詞\n"
             "- お題と無関係なものは禁止（変数、JSON、リスト、配列、要素、プログラミング用語など）\n"
+            "- 日本語で自然な表記にする\n"
             "- 候補はすべて異なるもの\n"
             "- 説明文や前置きは禁止\n"
             "- JSONのみ出力\n\n"
@@ -288,7 +336,9 @@ def _ollama_generate_answers(theme):
             continue
 
         for c in new_candidates:
-            if isinstance(c, str) and c.strip() and c.strip() not in seen:
+            if (isinstance(c, str) and c.strip()
+                    and c.strip() not in seen
+                    and _is_valid_answer(c.strip())):
                 seen.add(c.strip())
                 candidates.append(c.strip())
 
@@ -303,93 +353,142 @@ def _ollama_generate_answers(theme):
         )
         return None
 
-    return candidates[:REQUIRED_ANSWERS]
+    return candidates
 
 
-def _ollama_generate_question_1(theme, answer):
-    prompt = (
-        f"あなたはクイズゲームの問題作成AIです。\n\n"
-        f"お題：\n「{theme}」\n\n"
-        f"正解：\n「{answer}」\n\n"
-        f"上記の「{answer}」が正解になる問題を1問だけ作成してください。\n\n"
-        "【絶対条件】\n"
-        "- 問題は1問だけ\n"
-        "- 正解は必ず「{answer}」\n"
-        "- 問題文に「{answer}」という文字を含めない\n"
-        f"- お題「{theme}」に直接関係する内容にする\n"
-        "- プレイヤー個人の経験を質問する問題は禁止\n"
-        "- 「あなたが」「あなたは」「好きですか」「知っていますか」などの質問は禁止\n"
-        "- 正解が客観的に決まる問題にする\n"
-        "- 「誰」「何」「どこ」「いつ」などの客観的な知識問題を優先\n"
-        "- 複数の答えが成立する曖昧な問題は禁止\n"
-        "- JSONのみ出力\n"
-        "- 説明文は禁止\n\n"
-        "【出力形式】\n"
-        '{"question":"問題文"}'
-    )
-    for attempt in range(MAX_QUESTION_RETRIES):
+def _is_valid_answer(answer):
+    import unicodedata
+    if not answer or len(answer) < 1:
+        return False
+    if len(answer) > 15:
+        return False
+    has_cjk = False
+    has_kana_or_latin = False
+    for ch in answer:
+        name = unicodedata.name(ch, "")
+        if "CJK" in name:
+            has_cjk = True
+        if "HIRAGANA" in name or "KATAKANA" in name or ch.isalpha():
+            has_kana_or_latin = True
+    if has_cjk and not has_kana_or_latin:
+        return False
+    if answer.isdigit():
+        return False
+    return True
+
+
+def _ollama_generate_question_candidates(theme, answer):
+    for attempt in range(MAX_QUESTION_CANDIDATE_RETRIES):
+        prompt = (
+            f"あなたはクイズゲームの問題作成AIです。\n\n"
+            f"お題：「{theme}」\n"
+            f"正解：「{answer}」\n\n"
+            f"正解が「{answer}」となるクイズを{QUESTION_CANDIDATE_COUNT}個作成してください。\n\n"
+            "【最も重要】\n"
+            "- 問題文に正解の名前を絶対に含めない\n"
+            "- 正解の別名・表記も含めない\n"
+            "- 正解を含む固有名詞・複合語も使わない\n\n"
+            "【問題の条件】\n"
+            "- テーマについて一般的な知識を問う質問にする\n"
+            "- 正解の特徴・役割・関係を利用して問題を作る\n"
+            "- 客観的な知識問題にする\n"
+            "- 正解が客観的に1つに決まる問題にする\n"
+            "- 複数の答えが成立する曖昧な問題は禁止\n"
+            "- 問題文は簡潔で自然な日本語にする\n"
+            "- 日本語だけで生成する\n"
+            "- 各問題は異なる観点・特徴から出題する\n\n"
+            "【禁止事項】\n"
+            "- 「あなた」「あなたが」「あなたは」「君」を使用しない\n"
+            "- 「好きですか」「知っていますか」「飼っていますか」「持っていますか」は禁止\n"
+            "- 「使っていますか」「見たことがありますか」「経験がありますか」は禁止\n"
+            "- 「〜したことがありますか」の形式は禁止\n"
+            "- プレイヤーの経験・好み・所有物を質問しない\n"
+            "- 個人の意見を求める質問は禁止\n\n"
+            "【出力形式】\n"
+            '{"questions":["問題1","問題2","問題3","問題4","問題5","問題6","問題7","問題8"]}'
+        )
         try:
-            raw = _call_ollama(prompt, temperature=0.2, response_format="json")
+            raw = _call_ollama(prompt, temperature=0.4, response_format="json")
             data = _parse_json_from_text(raw)
-            q = data.get("question", "") if isinstance(data, dict) else ""
+            questions = data.get("questions", []) if isinstance(data, dict) else []
         except Exception as e:
             app.logger.error(
-                f"Ollama question 1 generation failed for '{answer}' "
+                f"Ollama question candidates failed for '{answer}' "
                 f"(attempt {attempt + 1}): {e}"
             )
             continue
-        if isinstance(q, str) and q.strip():
-            return q.strip()
+        if isinstance(questions, list) and len(questions) >= 2:
+            app.logger.info(f"Ollama question candidates: {len(questions)}")
+            return [q.strip() for q in questions if isinstance(q, str) and q.strip()]
         app.logger.warning(
-            f"Ollama question 1 validation failed for '{answer}' "
-            f"(attempt {attempt + 1}): '{q}'"
+            f"Ollama question candidates rejected for '{answer}' "
+            f"(attempt {attempt + 1}): {questions}"
         )
     return None
 
 
-def _ollama_generate_question_2(theme, answer, existing_question):
-    prompt = (
-        f"あなたはクイズゲームの問題作成AIです。\n\n"
-        f"お題：\n「{theme}」\n\n"
-        f"正解：\n「{answer}」\n\n"
-        f"既に生成した問題：\n「{existing_question}」\n\n"
-        f"上記の「{answer}」が正解になる問題を、既に生成した問題とは異なる内容で1問だけ作成してください。\n\n"
-        "【絶対条件】\n"
-        "- 問題は1問だけ\n"
-        "- 正解は必ず「{answer}」\n"
-        "- 問題文に「{answer}」という文字を含めない\n"
-        f"- お題「{theme}」に直接関係する内容にする\n"
-        "- 既に生成した問題と内容が重複しない\n"
-        "- プレイヤー個人の経験を質問する問題は禁止\n"
-        "- 「あなたが」「あなたは」「好きですか」「知っていますか」などの質問は禁止\n"
-        "- 正解が客観的に決まる問題にする\n"
-        "- 「誰」「何」「どこ」「いつ」などの客観的な知識問題を優先\n"
-        "- 複数の答えが成立する曖昧な問題は禁止\n"
-        "- JSONのみ出力\n"
-        "- 説明文は禁止\n\n"
-        "【出力形式】\n"
-        '{"question":"問題文"}'
-    )
-    for attempt in range(MAX_QUESTION_RETRIES):
-        try:
-            raw = _call_ollama(prompt, temperature=0.2, response_format="json")
-            data = _parse_json_from_text(raw)
-            q = data.get("question", "") if isinstance(data, dict) else ""
-        except Exception as e:
-            app.logger.error(
-                f"Ollama question 2 generation failed for '{answer}' "
-                f"(attempt {attempt + 1}): {e}"
-            )
-            continue
-        if (isinstance(q, str) and q.strip()
-                and _normalize_for_comparison(q) != _normalize_for_comparison(existing_question)):
-            return q.strip()
-        app.logger.warning(
-            f"Ollama question 2 rejected for '{answer}' "
-            f"(attempt {attempt + 1}): '{q}' "
-            f"(duplicate={_normalize_for_comparison(q) == _normalize_for_comparison(existing_question)})"
-        )
-    return None
+def _validate_question(question, answer):
+    if not question or not isinstance(question, str):
+        return False, "empty"
+    q = question.strip()
+    if len(q) < 5:
+        return False, "too_short"
+    if answer in q:
+        return False, "contains_answer"
+    if answer.lower() in q.lower():
+        return False, "contains_answer_case_insensitive"
+    if _check_personal_expression(q):
+        return False, "personal_expression"
+    if not ("？" in q or "?" in q):
+        return False, "no_question_mark"
+    return True, "ok"
+
+
+def _select_questions(candidates, answer):
+    valid = []
+    for q in candidates:
+        ok, reason = _validate_question(q, answer)
+        if ok:
+            app.logger.info(f"Ollama question accepted: '{q}'")
+            valid.append(q)
+        else:
+            app.logger.info(f"Ollama question rejected: '{q}' (reason={reason})")
+
+    if len(valid) < 2:
+        return None
+
+    selected = [valid[0]]
+    for v in valid[1:]:
+        if _normalize_for_comparison(v) != _normalize_for_comparison(selected[0]):
+            selected.append(v)
+            break
+
+    if len(selected) < 2:
+        return None
+
+    app.logger.info(f"Ollama selected questions: {selected}")
+    return selected
+
+
+PERSONAL_EXPRESSIONS = [
+    "あなた",
+    "好きですか",
+    "知っていますか",
+    "飼っていますか",
+    "持っていますか",
+    "使っていますか",
+    "見たことがありますか",
+    "経験がありますか",
+    "したことがありますか",
+]
+
+
+def _check_personal_expression(text):
+    for expr in PERSONAL_EXPRESSIONS:
+        if expr in text:
+            return True
+    return False
+
 
 
 # --- Game Cleanup ---
