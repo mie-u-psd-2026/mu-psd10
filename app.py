@@ -22,6 +22,9 @@ games = {}
 # Game history (completed games)
 game_history = []
 
+# Quiz history (generated quiz pairs with answers)
+quiz_history = []
+
 if app.debug:
     @app.after_request
     def add_header(response):
@@ -106,6 +109,100 @@ def _is_gemini_rate_limit_error(exc):
     if "too many requests" in error_str:
         return True
     return False
+
+
+def _is_gemini_auth_error(exc):
+    error_str = str(exc).lower()
+    if "401" in error_str:
+        return True
+    if "403" in error_str:
+        return True
+    if "permission denied" in error_str:
+        return True
+    if "unauthorized" in error_str:
+        return True
+    return False
+
+
+def _is_gemini_server_error(exc):
+    error_str = str(exc).lower()
+    if "500" in error_str:
+        return True
+    if "502" in error_str:
+        return True
+    if "503" in error_str:
+        return True
+    if "504" in error_str:
+        return True
+    if "internal server error" in error_str:
+        return True
+    if "service unavailable" in error_str:
+        return True
+    return False
+
+
+def _call_gemini_model(theme, model_name):
+    prompt = (
+        f"お題「{theme}」について、神経衰弱ゲームのデータを生成してください。\n\n"
+        "【厳守事項】\n"
+        "- JSONのみ出力してください。説明文・Markdown・コードブロックは一切不要です。\n"
+        "- pairsは必ず8個生成してください。\n"
+        "- 各pairのquestionsは必ず2個にしてください。\n"
+        "- answerは8個すべて異なるものにしてください。\n"
+        "- 2つのquestionsは異なる表現・聞き方にしてください。\n"
+        "- 質問は短く具体的にしてください。曖昧で複数の答えが考えられる質問は避けてください。\n"
+        "- お題から大きく外れた内容は生成しないでください。\n"
+        "- pair_idは1〜8の整数にしてください。\n"
+        "- 余計なフィールドは生成しないでください。\n\n"
+        "【出力形式】\n"
+        '{"pairs":[{"pair_id":1,"answer":"回答","questions":["質問A","質問B"]}]}\n'
+    )
+    result = _call_gemini(prompt, response_schema=GAME_SCHEMA, model_name=model_name)
+    if not _validate_game_data(result):
+        raise ValueError("Gemini response validation failed")
+    return result.get("pairs", [])
+
+
+def _generate_game_data_with_gemini(theme):
+    for model_name in GEMINI_MODELS:
+        app.logger.info(f"Using Gemini model: {model_name}")
+        try:
+            pairs = _call_gemini_model(theme, model_name)
+            app.logger.info(f"Gemini model {model_name} succeeded")
+            app.logger.info(f"LLM generation backend: Gemini {model_name}")
+            return pairs
+        except Exception as e:
+            if _is_gemini_rate_limit_error(e):
+                app.logger.warning(
+                    f"Gemini model {model_name} rate limit reached, trying next model"
+                )
+            elif _is_gemini_auth_error(e):
+                app.logger.warning(
+                    f"Gemini model {model_name} auth error: {e}, skipping remaining Gemini models"
+                )
+                break
+            elif _is_gemini_server_error(e):
+                app.logger.warning(
+                    f"Gemini model {model_name} server error: {e}, retrying once"
+                )
+                try:
+                    pairs = _call_gemini_model(theme, model_name)
+                    app.logger.info(f"Gemini model {model_name} succeeded on retry")
+                    app.logger.info(f"LLM generation backend: Gemini {model_name}")
+                    return pairs
+                except Exception as retry_e:
+                    if _is_gemini_rate_limit_error(retry_e):
+                        app.logger.warning(
+                            f"Gemini model {model_name} rate limit on retry, trying next model"
+                        )
+                    else:
+                        app.logger.warning(
+                            f"Gemini model {model_name} retry failed: {retry_e}"
+                        )
+            else:
+                app.logger.warning(f"Gemini model {model_name} failed: {e}")
+    app.logger.warning("All Gemini models failed, falling back to Ollama")
+    return None
 
 
 def _call_ollama(prompt, temperature=0.2, response_format=None):
@@ -193,51 +290,33 @@ def _validate_game_data(data):
         if q0 == q1:
             app.logger.warning(f"Validation failed: pair {i} has duplicate questions")
             return False
+        if answer.lower() in q0.lower():
+            app.logger.warning(f"Validation failed: pair {i} answer found in question[0]")
+            return False
+        if answer.lower() in q1.lower():
+            app.logger.warning(f"Validation failed: pair {i} answer found in question[1]")
+            return False
+        if _check_personal_expression(q0):
+            app.logger.warning(f"Validation failed: pair {i} question[0] contains personal expression")
+            return False
+        if _check_personal_expression(q1):
+            app.logger.warning(f"Validation failed: pair {i} question[1] contains personal expression")
+            return False
     return True
 
 
 # --- Game Data Generation (single call) ---
 
 def _generate_game_data(theme):
-    prompt = (
-        f"お題「{theme}」について、神経衰弱ゲームのデータを生成してください。\n\n"
-        "【厳守事項】\n"
-        "- JSONのみ出力してください。説明文・Markdown・コードブロックは一切不要です。\n"
-        "- pairsは必ず8個生成してください。\n"
-        "- 各pairのquestionsは必ず2個にしてください。\n"
-        "- answerは8個すべて異なるものにしてください。\n"
-        "- 2つのquestionsは異なる表現・聞き方にしてください。\n"
-        "- 質問は短く具体的にしてください。曖昧で複数の答えが考えられる質問は避けてください。\n"
-        "- お題から大きく外れた内容は生成しないでください。\n"
-        "- pair_idは1〜8の整数にしてください。\n"
-        "- 余計なフィールドは生成しないでください。\n\n"
-        "【出力形式】\n"
-        '{"pairs":[{"pair_id":1,"answer":"回答","questions":["質問A","質問B"]}]}\n'
-    )
-
-    # Try Gemini models in order
     if gemini_client:
-        for model_name in GEMINI_MODELS:
-            app.logger.info(f"Using Gemini model: {model_name}")
-            try:
-                result = _call_gemini(prompt, response_schema=GAME_SCHEMA, model_name=model_name)
-                if _validate_game_data(result):
-                    app.logger.info(f"Gemini model {model_name} succeeded")
-                    return result.get("pairs", [])
-                app.logger.warning(f"Gemini model {model_name} response validation failed")
-            except Exception as e:
-                if _is_gemini_rate_limit_error(e):
-                    app.logger.warning(
-                        f"Gemini model {model_name} rate limit reached, trying next model"
-                    )
-                else:
-                    app.logger.warning(f"Gemini model {model_name} failed: {e}")
-                continue
-        app.logger.warning("All Gemini models failed, falling back to Ollama")
-    else:
-        app.logger.warning("GEMINI_API_KEY is not configured, using Ollama")
+        result = _generate_game_data_with_gemini(theme)
+        if result is not None:
+            return result
 
-    # Fallback to Ollama
+    if not gemini_client:
+        app.logger.warning("GEMINI_API_KEY is not configured, using Ollama")
+    app.logger.info(f"Using Ollama model: {OLLAMA_MODEL}")
+    app.logger.info(f"LLM generation backend: Ollama {OLLAMA_MODEL}")
     return _generate_game_data_with_ollama(theme)
 
 
@@ -620,6 +699,16 @@ def _create_game(theme):
     }
 
     public_cards = [{"id": c["id"], "text": c["text"]} for c in cards]
+
+    quiz_history.append({
+        "quiz_id": uuid.uuid4().hex,
+        "theme": theme,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "pairs": pairs,
+    })
+    if len(quiz_history) > 100:
+        del quiz_history[:-100]
+
     return {"game_id": game_id, "cards": public_cards}
 
 
@@ -655,6 +744,7 @@ def check_pair():
     state["moves"] += 1
     game_cleared = False
     score = None
+    elapsed_seconds = None
 
     if is_pair:
         state["matched"].add(id1)
@@ -684,12 +774,19 @@ def check_pair():
         "answer": state["cards"][id1] if is_pair else None,
         "game_cleared": game_cleared,
         "score": score,
+        "moves": state["moves"],
+        "elapsed_seconds": elapsed_seconds,
     })
 
 
 @app.route('/game_history', methods=['GET'])
 def get_game_history():
     return jsonify({"history": list(reversed(game_history))})
+
+
+@app.route('/quiz_history', methods=['GET'])
+def get_quiz_history():
+    return jsonify({"history": list(reversed(quiz_history))})
 
 
 if __name__ == '__main__':
