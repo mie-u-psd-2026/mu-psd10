@@ -88,7 +88,7 @@ def _call_gemini(prompt, response_schema=None):
     return response.text
 
 
-def _call_ollama(prompt, temperature=0.2):
+def _call_ollama(prompt, temperature=0.2, response_format=None):
     url = f"{OLLAMA_BASE_URL}/api/chat"
     payload = {
         "model": OLLAMA_MODEL,
@@ -96,6 +96,8 @@ def _call_ollama(prompt, temperature=0.2):
         "stream": False,
         "options": {"temperature": temperature},
     }
+    if response_format == "json":
+        payload["format"] = "json"
     http_client = httpx.Client(timeout=60.0)
     try:
         resp = http_client.post(url, json=payload)
@@ -211,14 +213,10 @@ def _generate_game_data(theme):
 def _generate_game_data_with_ollama(theme):
     app.logger.info(f"Using Ollama model {OLLAMA_MODEL}")
 
-    # Step 1: Generate 8 answers one by one
-    answers = []
-    for i in range(8):
-        answer = _ollama_generate_one_answer(theme, answers)
-        if answer is None:
-            app.logger.warning(f"Ollama failed to generate answer {i + 1}")
-            return None
-        answers.append(answer)
+    # Step 1: Generate candidate answers (20 at once) and select 8 unique
+    answers = _ollama_generate_answers(theme)
+    if answers is None:
+        return None
 
     # Step 2: Generate 2 questions per answer (1 question at a time)
     pairs = []
@@ -240,8 +238,10 @@ def _generate_game_data_with_ollama(theme):
     return pairs
 
 
-MAX_ANSWER_RETRIES = 3
+MAX_CANDIDATE_RETRIES = 3
 MAX_QUESTION_RETRIES = 3
+REQUIRED_ANSWERS = 8
+CANDIDATE_POOL_SIZE = 20
 
 
 def _normalize_for_comparison(text):
@@ -254,46 +254,56 @@ def _normalize_for_comparison(text):
     return normalized.strip().lower()
 
 
-def _ollama_generate_one_answer(theme, existing_answers):
-    existing_text = ""
-    if existing_answers:
-        existing_text = (
-            f"\nすでに使用した答え：{', '.join(existing_answers)}\n"
-            "上記とは異なる答えを生成してください。"
+def _ollama_generate_answers(theme):
+    seen = set()
+    candidates = []
+
+    for pool_attempt in range(MAX_CANDIDATE_RETRIES):
+        used_text = ""
+        if candidates:
+            used_text = (
+                f"\nすでに生成された候補：{', '.join(candidates)}\n"
+                "上記とは異なる候補を生成してください。"
+            )
+        prompt = (
+            f"あなたはクイズゲームの答えを生成するAIです。\n\n"
+            f"お題：\n「{theme}」\n"
+            f"{used_text}\n"
+            f"上記のお題に関連する答えの候補を{CANDIDATE_POOL_SIZE}個生成してください。\n\n"
+            "【絶対条件】\n"
+            f"- お題「{theme}」に直接関係する具体的な単語または固有名詞\n"
+            "- お題と無関係なものは禁止（変数、JSON、リスト、配列、要素、プログラミング用語など）\n"
+            "- 候補はすべて異なるもの\n"
+            "- 説明文や前置きは禁止\n"
+            "- JSONのみ出力\n\n"
+            "【出力形式】\n"
+            '{"candidates":["候補1","候補2",...]}'
         )
-    prompt = (
-        f"あなたはクイズゲームの答えを1つだけ生成するAIです。\n\n"
-        f"お題：\n「{theme}」\n"
-        f"{existing_text}\n"
-        f"上記のお題に直接関係し、すでに使用した答えとは異なる具体的な答えを1つだけ生成してください。\n\n"
-        "【絶対条件】\n"
-        "- 答えは1つだけ\n"
-        "- お題に直接関係するもの\n"
-        "- 既に使用した答えと同じものは禁止\n"
-        "- お題と無関係なものは禁止\n"
-        "- 説明は禁止\n"
-        "- 前置きは禁止\n"
-        "- JSONのみ出力\n\n"
-        "【出力形式】\n"
-        '{"answer":"単語"}\n'
-    )
-    for attempt in range(MAX_ANSWER_RETRIES):
         try:
-            raw = _call_ollama(prompt, temperature=0.2)
+            raw = _call_ollama(prompt, temperature=0.2, response_format="json")
             data = _parse_json_from_text(raw)
-            answer = data.get("answer", "") if isinstance(data, dict) else ""
+            new_candidates = data.get("candidates", []) if isinstance(data, dict) else []
         except Exception as e:
-            app.logger.error(f"Ollama answer generation failed (attempt {attempt + 1}): {e}")
+            app.logger.error(f"Ollama candidate generation failed (pool attempt {pool_attempt + 1}): {e}")
             continue
-        if (isinstance(answer, str) and answer.strip()
-                and answer.strip() not in existing_answers):
-            return answer.strip()
+
+        for c in new_candidates:
+            if isinstance(c, str) and c.strip() and c.strip() not in seen:
+                seen.add(c.strip())
+                candidates.append(c.strip())
+
+        app.logger.info(f"Ollama candidates collected: {len(candidates)}/{REQUIRED_ANSWERS}")
+        if len(candidates) >= REQUIRED_ANSWERS:
+            break
+
+    if len(candidates) < REQUIRED_ANSWERS:
         app.logger.warning(
-            f"Ollama answer rejected (attempt {attempt + 1}): "
-            f"'{answer}' (empty={not answer.strip()}, "
-            f"duplicate={answer.strip() in existing_answers})"
+            f"Ollama failed to collect {REQUIRED_ANSWERS} unique answers, "
+            f"got {len(candidates)}"
         )
-    return None
+        return None
+
+    return candidates[:REQUIRED_ANSWERS]
 
 
 def _ollama_generate_question_1(theme, answer):
@@ -308,16 +318,18 @@ def _ollama_generate_question_1(theme, answer):
         "- 問題文に「{answer}」という文字を含めない\n"
         f"- お題「{theme}」に直接関係する内容にする\n"
         "- プレイヤー個人の経験を質問する問題は禁止\n"
+        "- 「あなたが」「あなたは」「好きですか」「知っていますか」などの質問は禁止\n"
         "- 正解が客観的に決まる問題にする\n"
+        "- 「誰」「何」「どこ」「いつ」などの客観的な知識問題を優先\n"
         "- 複数の答えが成立する曖昧な問題は禁止\n"
         "- JSONのみ出力\n"
         "- 説明文は禁止\n\n"
         "【出力形式】\n"
-        '{"question":"問題文"}\n'
+        '{"question":"問題文"}'
     )
     for attempt in range(MAX_QUESTION_RETRIES):
         try:
-            raw = _call_ollama(prompt, temperature=0.2)
+            raw = _call_ollama(prompt, temperature=0.2, response_format="json")
             data = _parse_json_from_text(raw)
             q = data.get("question", "") if isinstance(data, dict) else ""
         except Exception as e:
@@ -349,16 +361,18 @@ def _ollama_generate_question_2(theme, answer, existing_question):
         f"- お題「{theme}」に直接関係する内容にする\n"
         "- 既に生成した問題と内容が重複しない\n"
         "- プレイヤー個人の経験を質問する問題は禁止\n"
+        "- 「あなたが」「あなたは」「好きですか」「知っていますか」などの質問は禁止\n"
         "- 正解が客観的に決まる問題にする\n"
+        "- 「誰」「何」「どこ」「いつ」などの客観的な知識問題を優先\n"
         "- 複数の答えが成立する曖昧な問題は禁止\n"
         "- JSONのみ出力\n"
         "- 説明文は禁止\n\n"
         "【出力形式】\n"
-        '{"question":"問題文"}\n'
+        '{"question":"問題文"}'
     )
     for attempt in range(MAX_QUESTION_RETRIES):
         try:
-            raw = _call_ollama(prompt, temperature=0.2)
+            raw = _call_ollama(prompt, temperature=0.2, response_format="json")
             data = _parse_json_from_text(raw)
             q = data.get("question", "") if isinstance(data, dict) else ""
         except Exception as e:
