@@ -1,11 +1,17 @@
 import json
+import os
 import random
 import re
 import uuid
 from datetime import datetime, timezone
 
+import httpx
+from dotenv import load_dotenv
 from flask import Flask, request, jsonify, send_from_directory
-from openai import OpenAI
+from google import genai
+from google.genai import types
+
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -26,77 +32,109 @@ if app.debug:
         return response
 
 
-client = OpenAI(
-    base_url="http://localhost:11434/v1",
-    api_key="ollama",
-)
-OLLAMA_MODEL = "qwen2.5-coder:0.5b"
+# --- LLM Configuration ---
+
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = "gemini-3.6-flash"
+
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = "qwen3.5:0.8b"
+
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+
+WORDS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "words": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 8,
+            "maxItems": 8,
+        }
+    },
+    "required": ["words"],
+}
+
+QUIZ_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "pairs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "pair_id": {"type": "integer"},
+                    "answer": {"type": "string"},
+                    "questions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 2,
+                        "maxItems": 2,
+                    },
+                },
+                "required": ["pair_id", "answer", "questions"],
+            },
+            "minItems": 8,
+            "maxItems": 8,
+        }
+    },
+    "required": ["pairs"],
+}
 
 
-@app.route('/')
-def index():
-    return send_from_directory(app.static_folder, 'index.html')
+# --- LLM Call Layer ---
 
-
-@app.route('/send_api', methods=['POST'])
-def send_api():
-    data = request.get_json()
-
-    if not data or 'text' not in data:
-        app.logger.error("Request JSON is missing or does not contain 'text' field.")
-        return jsonify({"error": "Missing 'text' in request body"}), 400
-
-    received_text = data['text']
-    if not received_text.strip():
-        app.logger.error("Received text is empty or whitespace.")
-        return jsonify({"error": "Input text cannot be empty"}), 400
-
-    system_prompt = "140字以内で回答してください。"
-    if 'context' in data and data['context'] and data['context'].strip():
-        system_prompt = data['context'].strip()
-        app.logger.info(f"Using custom system prompt from context: {system_prompt}")
-    else:
-        app.logger.info(f"Using default system prompt: {system_prompt}")
-
-    try:
-        chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": received_text}
-            ],
-            model=OLLAMA_MODEL,
-        )
-
-        if chat_completion.choices and chat_completion.choices[0].message:
-            processed_text = chat_completion.choices[0].message.content
-        else:
-            processed_text = "AIから有効な応答がありませんでした。"
-
-        return jsonify({"message": "AIによってデータが処理されました。", "processed_text": processed_text})
-
-    except Exception as e:
-        app.logger.error(f"Ollama API call failed: {e}")
-        return jsonify({"error": f"AIサービスとの通信中にエラーが発生しました。"}), 500
-
-
-MAX_WORD_RETRIES = 3
-MAX_QUIZ_RETRIES = 3
-
-
-def _call_llm(system_prompt, user_prompt):
-    chat_completion = client.chat.completions.create(
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        model=OLLAMA_MODEL,
+def _call_gemini(prompt, response_schema=None):
+    if not gemini_client:
+        raise RuntimeError("Gemini APIキーが設定されていません。")
+    config = types.GenerateContentConfig(temperature=1.0)
+    if response_schema:
+        config.response_mime_type = "application/json"
+        config.response_json_schema = response_schema
+    response = gemini_client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=prompt,
+        config=config,
     )
-    return chat_completion.choices[0].message.content
+    if response_schema:
+        return response.parsed
+    return response.text
 
+
+def _call_ollama(prompt):
+    url = f"{OLLAMA_BASE_URL}/api/chat"
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+    }
+    http_client = httpx.Client(timeout=60.0)
+    try:
+        resp = http_client.post(url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["message"]["content"]
+    finally:
+        http_client.close()
+
+
+def _parse_json_from_text(raw):
+    json_match = re.search(r"\{[\s\S]*\}", raw)
+    if not json_match:
+        return None
+    try:
+        return json.loads(json_match.group())
+    except (json.JSONDecodeError, KeyError):
+        return None
+
+
+# --- Score ---
 
 def _calculate_score(moves):
     return max(0, 1000 - (moves - 8) * 10)
 
+
+# --- Validation ---
 
 def _validate_words(words, theme):
     if not isinstance(words, list):
@@ -108,48 +146,6 @@ def _validate_words(words, theme):
     if len(set(words)) != 8:
         return False
     return True
-
-
-def _generate_words(theme):
-    system_prompt = (
-        "あなたはJSONのみを出力します。他のテキストは一切出力しないでください。"
-        "コードブロック（```）も使用しないでください。"
-    )
-    for attempt in range(MAX_WORD_RETRIES):
-        user_prompt = (
-            f"お題「{theme}」に関連する8つの単語を抽出してください。\n"
-            "【規則】\n"
-            "1. お題と関連する具体的な単語を8つ\n"
-            "2. 単語は簡潔に（1語〜数語）\n"
-            "3. 重複しないこと\n"
-            "【出力形式】\n"
-            '{"words":["単語1","単語2","単語3","単語4","単語5","単語6","単語7","単語8"]}\n'
-            "上記JSONのみ出力してください。"
-        )
-        try:
-            raw = _call_llm(system_prompt, user_prompt)
-        except Exception as e:
-            app.logger.error(f"Ollama API call failed (attempt {attempt + 1}): {e}")
-            continue
-
-        json_match = re.search(r"\{[\s\S]*\}", raw)
-        if not json_match:
-            app.logger.warning(f"Failed to extract JSON (attempt {attempt + 1}): {raw}")
-            continue
-
-        try:
-            data = json.loads(json_match.group())
-            words = data.get("words", [])
-        except (json.JSONDecodeError, KeyError):
-            app.logger.warning(f"Invalid JSON (attempt {attempt + 1}): {raw}")
-            continue
-
-        if _validate_words(words, theme):
-            return words
-
-        app.logger.warning(f"Word validation failed (attempt {attempt + 1}): {words}")
-
-    return None
 
 
 def _validate_quizzes(pairs, words):
@@ -185,49 +181,95 @@ def _validate_quizzes(pairs, words):
     return True
 
 
-def _generate_quizzes(words):
-    system_prompt = (
-        "あなたはJSONのみを出力します。他のテキストは一切出力しないでください。"
-        "コードブロック（```）も使用しないでください。"
+# --- Word Generation ---
+
+def _generate_words(theme):
+    prompt = (
+        f"お題「{theme}」に関連する8つの単語を抽出してください。\n"
+        "【規則】\n"
+        "1. お題と関連する具体的な単語を8つ\n"
+        "2. 単語は簡潔に（1語〜数語）\n"
+        "3. 重複しないこと\n"
     )
-    for attempt in range(MAX_QUIZ_RETRIES):
-        user_prompt = (
-            f"以下の8つの単語について、各単語に対し答えがその単語になるクイズを2つずつ作ってください。\n"
-            f"対象単語：{json.dumps(words, ensure_ascii=False)}\n"
-            "【規則】\n"
-            "1. 各単語に対しクイズを2つ作る\n"
-            "2. 2つのクイズは質問文を変える\n"
-            "3. クイズは短く簡潔に\n"
-            "4. 2つの問題文は同一にしないこと\n"
-            "【出力形式】\n"
-            '{"pairs":[{"pair_id":1,"answer":"単語","questions":["質問A","質問B"]}]}\n'
-            "上記JSONのみ出力してください。"
-        )
+
+    # Try Gemini first
+    if gemini_client:
+        for attempt in range(MAX_WORD_RETRIES):
+            try:
+                result = _call_gemini(prompt, response_schema=WORDS_SCHEMA)
+                words = result.get("words", []) if isinstance(result, dict) else []
+            except Exception as e:
+                app.logger.error(f"Gemini API call failed (attempt {attempt + 1}): {e}")
+                continue
+            if _validate_words(words, theme):
+                app.logger.info("Using Gemini API")
+                return words
+            app.logger.warning(f"Gemini word validation failed (attempt {attempt + 1}): {words}")
+        app.logger.warning("Gemini unavailable, falling back to Ollama")
+
+    # Fallback to Ollama
+    for attempt in range(MAX_WORD_RETRIES):
         try:
-            raw = _call_llm(system_prompt, user_prompt)
+            raw = _call_ollama(prompt)
+            data = _parse_json_from_text(raw)
+            words = data.get("words", []) if isinstance(data, dict) else []
         except Exception as e:
             app.logger.error(f"Ollama API call failed (attempt {attempt + 1}): {e}")
             continue
-
-        json_match = re.search(r"\{[\s\S]*\}", raw)
-        if not json_match:
-            app.logger.warning(f"Failed to extract JSON from quiz response (attempt {attempt + 1}): {raw}")
-            continue
-
-        try:
-            data = json.loads(json_match.group())
-            pairs = data.get("pairs", [])
-        except (json.JSONDecodeError, KeyError):
-            app.logger.warning(f"Invalid JSON from quiz response (attempt {attempt + 1}): {raw}")
-            continue
-
-        if _validate_quizzes(pairs, words):
-            return pairs
-
-        app.logger.warning(f"Quiz validation failed (attempt {attempt + 1}): {pairs}")
+        if _validate_words(words, theme):
+            app.logger.info(f"Using Ollama model {OLLAMA_MODEL}")
+            return words
+        app.logger.warning(f"Ollama word validation failed (attempt {attempt + 1}): {words}")
 
     return None
 
+
+# --- Quiz Generation ---
+
+def _generate_quizzes(words):
+    prompt = (
+        f"以下の8つの単語について、各単語に対し答えがその単語になるクイズを2つずつ作ってください。\n"
+        f"対象単語：{json.dumps(words, ensure_ascii=False)}\n"
+        "【規則】\n"
+        "1. 各単語に対しクイズを2つ作る\n"
+        "2. 2つのクイズは質問文を変える\n"
+        "3. クイズは短く簡潔に\n"
+        "4. 2つの問題文は同一にしないこと\n"
+    )
+
+    # Try Gemini first
+    if gemini_client:
+        for attempt in range(MAX_QUIZ_RETRIES):
+            try:
+                result = _call_gemini(prompt, response_schema=QUIZ_SCHEMA)
+                pairs = result.get("pairs", []) if isinstance(result, dict) else []
+            except Exception as e:
+                app.logger.error(f"Gemini API call failed (attempt {attempt + 1}): {e}")
+                continue
+            if _validate_quizzes(pairs, words):
+                app.logger.info("Using Gemini API")
+                return pairs
+            app.logger.warning(f"Gemini quiz validation failed (attempt {attempt + 1}): {pairs}")
+        app.logger.warning("Gemini unavailable, falling back to Ollama")
+
+    # Fallback to Ollama
+    for attempt in range(MAX_QUIZ_RETRIES):
+        try:
+            raw = _call_ollama(prompt)
+            data = _parse_json_from_text(raw)
+            pairs = data.get("pairs", []) if isinstance(data, dict) else []
+        except Exception as e:
+            app.logger.error(f"Ollama API call failed (attempt {attempt + 1}): {e}")
+            continue
+        if _validate_quizzes(pairs, words):
+            app.logger.info(f"Using Ollama model {OLLAMA_MODEL}")
+            return pairs
+        app.logger.warning(f"Ollama quiz validation failed (attempt {attempt + 1}): {pairs}")
+
+    return None
+
+
+# --- Game Cleanup ---
 
 GAME_TTL_SECONDS = 3600
 
@@ -244,6 +286,58 @@ def _cleanup_old_games():
             expired_ids.append(gid)
     for gid in expired_ids:
         del games[gid]
+
+
+# --- Routes ---
+
+@app.route('/')
+def index():
+    return send_from_directory(app.static_folder, 'index.html')
+
+
+@app.route('/send_api', methods=['POST'])
+def send_api():
+    data = request.get_json()
+
+    if not data or 'text' not in data:
+        app.logger.error("Request JSON is missing or does not contain 'text' field.")
+        return jsonify({"error": "Missing 'text' in request body"}), 400
+
+    received_text = data['text']
+    if not received_text.strip():
+        app.logger.error("Received text is empty or whitespace.")
+        return jsonify({"error": "Input text cannot be empty"}), 400
+
+    system_prompt = "140字以内で回答してください。"
+    if 'context' in data and data['context'] and data['context'].strip():
+        system_prompt = data['context'].strip()
+        app.logger.info(f"Using custom system prompt from context: {system_prompt}")
+    else:
+        app.logger.info(f"Using default system prompt: {system_prompt}")
+
+    prompt = f"{system_prompt}\n\n{received_text}"
+
+    # Try Gemini first
+    if gemini_client:
+        try:
+            response_text = _call_gemini(prompt)
+            app.logger.info("Using Gemini API")
+            return jsonify({"message": "AIによってデータが処理されました。", "processed_text": response_text})
+        except Exception as e:
+            app.logger.warning(f"Gemini API failed: {e}")
+
+    # Fallback to Ollama
+    try:
+        response_text = _call_ollama(prompt)
+        app.logger.info(f"Using Ollama model {OLLAMA_MODEL}")
+        return jsonify({"message": "AIによってデータが処理されました。", "processed_text": response_text})
+    except Exception as e:
+        app.logger.error(f"Ollama API call failed: {e}")
+        return jsonify({"error": "Gemini APIとOllamaのどちらも利用できないため、応答を生成できませんでした。"}), 500
+
+
+MAX_WORD_RETRIES = 3
+MAX_QUIZ_RETRIES = 3
 
 
 @app.route('/generate_game', methods=['POST'])
@@ -281,11 +375,11 @@ def regenerate_game():
 def _create_game(theme):
     words = _generate_words(theme)
     if words is None:
-        return ({"error": "単語の生成に失敗しました。もう一度お試しください。"}, 500)
+        return ({"error": "Gemini APIとOllamaのどちらも利用できないため、ゲームを生成できませんでした。"}, 500)
 
     pairs = _generate_quizzes(words)
     if pairs is None:
-        return ({"error": "ゲームデータの生成に失敗しました。"}, 500)
+        return ({"error": "Gemini APIとOllamaのどちらも利用できないため、ゲームを生成できませんでした。"}, 500)
 
     cards = []
     card_id = 1

@@ -57,6 +57,17 @@ ollama pull qwen3.5:0.8b
   http://localhost:5000
   ```
 
+# LLM APIの利用について
+
+このアプリでは、通常時はGoogle Gemini APIを使用し、Gemini APIが利用できない場合はローカルのOllamaへ切り替えて処理を続行します。
+
+## Gemini API
+
+Gemini APIを利用する場合は、プロジェクトフォルダに`.env`ファイルを作成し、以下のようにAPIキーを設定してください。
+
+```env
+GEMINI_API_KEY=ここにGeminiのAPIキー
+```
 # 開発の参考資料
 
 ## ローカルの Ollama を使う場合（低性能だが利用制限なし）：
