@@ -141,7 +141,7 @@ def _is_gemini_server_error(exc):
     return False
 
 
-def _call_gemini_model(theme, model_name):
+def _call_gemini_model(theme, model_name, used_answers=None):
     prompt = (
         f"お題「{theme}」について、神経衰弱ゲームのデータを生成してください。\n\n"
         "【厳守事項】\n"
@@ -154,25 +154,64 @@ def _call_gemini_model(theme, model_name):
         "- お題から大きく外れた内容は生成しないでください。\n"
         "- pair_idは1〜8の整数にしてください。\n"
         "- 余計なフィールドは生成しないでください。\n\n"
+    )
+    
+    # 過去に使用済みのanswerがある場合はプロンプトに追加
+    if used_answers:
+        # 使用済みanswerが大量の場合、最新50件までに制限
+        limited_answers = used_answers[-50:] if len(used_answers) > 50 else used_answers
+        answers_text = "、".join(limited_answers)
+        prompt += (
+            "【過去使用済みのanswer】\n"
+            f"このお題では過去に以下の答えが使用されています。\n"
+            f"{answers_text}\n\n"
+            "上記と同じ答えは使用しないでください。新しい答えを生成してください。\n\n"
+        )
+    
+    prompt += (
         "【出力形式】\n"
         '{"pairs":[{"pair_id":1,"answer":"回答","questions":["質問A","質問B"]}]}\n'
     )
+    
     result = _call_gemini(prompt, response_schema=GAME_SCHEMA, model_name=model_name)
     if not _validate_game_data(result):
         raise ValueError("Gemini response validation failed")
+    
+    # 過去のanswerと重複していないかチェック
+    if used_answers:
+        generated_pairs = result.get("pairs", [])
+        for pair in generated_pairs:
+            answer = pair.get("answer", "")
+            if answer:
+                normalized = _normalize_for_comparison(answer)
+                if normalized in used_answers:
+                    raise ValueError(f"Generated answer '{answer}' conflicts with past answers")
+    
     return result.get("pairs", [])
 
 
 def _generate_game_data_with_gemini(theme):
+    # 過去に同じお題で使用したanswerを取得
+    used_answers = _get_used_answers_for_theme(theme)
+    if used_answers:
+        app.logger.info(f"Found {len(used_answers)} used answers for theme '{theme}'")
+    
     for model_name in GEMINI_MODELS:
         app.logger.info(f"Using Gemini model: {model_name}")
         try:
-            pairs = _call_gemini_model(theme, model_name)
+            pairs = _call_gemini_model(theme, model_name, used_answers)
             app.logger.info(f"Gemini model {model_name} succeeded")
             app.logger.info(f"LLM generation backend: Gemini {model_name}")
             return pairs
         except Exception as e:
-            if _is_gemini_rate_limit_error(e):
+            error_str = str(e).lower()
+            # 過去のanswerとの重複による失敗の場合
+            if "conflicts with past answers" in error_str:
+                app.logger.warning(
+                    f"Gemini model {model_name} generated conflicting answers, trying next model"
+                )
+                continue
+            elif _is_gemini_rate_limit_error(e):
                 app.logger.warning(
                     f"Gemini model {model_name} rate limit reached, trying next model"
                 )
@@ -186,7 +225,7 @@ def _generate_game_data_with_gemini(theme):
                     f"Gemini model {model_name} server error: {e}, retrying once"
                 )
                 try:
-                    pairs = _call_gemini_model(theme, model_name)
+                    pairs = _call_gemini_model(theme, model_name, used_answers)
                     app.logger.info(f"Gemini model {model_name} succeeded on retry")
                     app.logger.info(f"LLM generation backend: Gemini {model_name}")
                     return pairs
@@ -323,8 +362,13 @@ def _generate_game_data(theme):
 def _generate_game_data_with_ollama(theme):
     app.logger.info(f"Using Ollama model {OLLAMA_MODEL}")
 
+    # 過去に同じお題で使用したanswerを取得
+    used_answers = _get_used_answers_for_theme(theme)
+    if used_answers:
+        app.logger.info(f"Found {len(used_answers)} used answers for theme '{theme}' (Ollama)")
+
     # Step 1: Generate candidate answers (20 at once)
-    all_answers = _ollama_generate_answers(theme)
+    all_answers = _ollama_generate_answers(theme, used_answers)
     if all_answers is None:
         return None
 
@@ -380,7 +424,21 @@ def _normalize_for_comparison(text):
     return normalized.strip().lower()
 
 
-def _ollama_generate_answers(theme):
+def _get_used_answers_for_theme(theme):
+    """quiz_historyから指定テーマの過去のanswer一覧を取得"""
+    used_answers = set()
+    for record in quiz_history:
+        if record["theme"] == theme:
+            for pair in record["pairs"]:
+                answer = pair.get("answer", "")
+                if answer:
+                    normalized = _normalize_for_comparison(answer)
+                    if normalized:
+                        used_answers.add(normalized)
+    return list(used_answers)
+
+
+def _ollama_generate_answers(theme, used_answers=None):
     seen = set()
     candidates = []
 
@@ -391,10 +449,21 @@ def _ollama_generate_answers(theme):
                 f"\nすでに生成された候補：{', '.join(candidates)}\n"
                 "上記とは異なる候補を生成してください。"
             )
+        
+        past_text = ""
+        if used_answers:
+            limited = used_answers[-50:] if len(used_answers) > 50 else used_answers
+            past_text = (
+                f"\n【過去使用済みの答え】\n"
+                f"{'、'.join(limited)}\n"
+                "上記の答えは使用しないでください。新しい答えを生成してください。\n"
+            )
+        
         prompt = (
             f"あなたはクイズゲームの答えを生成するAIです。\n\n"
             f"お題：\n「{theme}」\n"
             f"{used_text}\n"
+            f"{past_text}\n"
             f"上記のお題に関連する答えの候補を{CANDIDATE_POOL_SIZE}個生成してください。\n\n"
             "【絶対条件】\n"
             f"- お題「{theme}」に直接関係する具体的な単語または固有名詞\n"
@@ -418,6 +487,10 @@ def _ollama_generate_answers(theme):
             if (isinstance(c, str) and c.strip()
                     and c.strip() not in seen
                     and _is_valid_answer(c.strip())):
+                normalized = _normalize_for_comparison(c.strip())
+                if used_answers and normalized in used_answers:
+                    app.logger.info(f"Ollama candidate '{c.strip()}' skipped: already used in past games")
+                    continue
                 seen.add(c.strip())
                 candidates.append(c.strip())
 
