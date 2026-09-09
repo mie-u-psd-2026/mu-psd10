@@ -278,7 +278,7 @@ def _parse_json_from_text(raw):
 # --- Score ---
 
 def _calculate_score(moves):
-    return max(0, 1000 - (moves - 8) * 50)
+    return max(0, 1000 - (moves - 10) * 30)
 
 
 # --- Validation ---
