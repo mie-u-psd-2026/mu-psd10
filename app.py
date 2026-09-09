@@ -150,6 +150,7 @@ def _call_gemini_model(theme, model_name, used_answers=None):
         "- 各pairのquestionsは必ず2個にしてください。\n"
         "- answerは8個すべて異なるものにしてください。\n"
         "- 2つのquestionsは異なる表現・聞き方にしてください。\n"
+        "- questionsの文中にanswerそのものを含めないでください。答えを問題文から推測できるようにしてください。\n"
         "- 質問は短く具体的にしてください。曖昧で複数の答えが考えられる質問は避けてください。\n"
         "- お題から大きく外れた内容は生成しないでください。\n"
         "- pair_idは1〜8の整数にしてください。\n"
