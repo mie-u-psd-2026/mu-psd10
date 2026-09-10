@@ -7,412 +7,501 @@
     <title>ことば合わせ</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;500;600;700&family=Shippori+Mincho:wght@400;500;600;700&family=Zen+Kaku+Gothic+New:wght@400;500;600;700&display=swap');
+
         :root {
-            --ink: #17221d;
-            --muted: #68766d;
-            --paper: #f5f1e8;
-            --green: #236b52;
-            --gold: #e3a72f;
-            --line: #d9d7c9;
+            --sumi: #202621;
+            --sumi-soft: #60685f;
+            --washi: #f6f1e7;
+            --washi-deep: #ece3d3;
+            --surface: rgba(255, 252, 245, 0.76);
+            --surface-strong: rgba(255, 253, 248, 0.94);
+            --indigo: #193d4a;
+            --indigo-deep: #112d37;
+            --matcha: #536b4f;
+            --gold: #b79045;
+            --gold-pale: #e2d1a4;
+            --vermilion: #a85443;
+            --line: rgba(32, 38, 33, 0.13);
+            --shadow: 0 20px 60px rgba(57, 47, 34, 0.09);
+            --shadow-card: 0 14px 28px rgba(42, 37, 28, 0.14);
+            --serif: 'Shippori Mincho', 'Noto Serif JP', 'Yu Mincho', serif;
+            --sans: 'Zen Kaku Gothic New', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', sans-serif;
         }
 
-        * {
-            box-sizing: border-box;
-        }
+        * { box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
 
         body {
             margin: 0;
-            color: var(--ink);
-            background: radial-gradient(circle at 85% 0%, #f0d98d 0, transparent 28%), var(--paper);
-            font-family: Georgia, "Noto Serif JP", serif;
+            min-height: 100vh;
+            color: var(--sumi);
+            font-family: var(--sans);
+            background:
+                radial-gradient(circle at 8% 8%, rgba(183, 144, 69, .15), transparent 22%),
+                radial-gradient(circle at 91% 7%, rgba(25, 61, 74, .10), transparent 25%),
+                linear-gradient(180deg, #fbf8f1 0%, var(--washi) 52%, #eee7da 100%);
         }
 
-        button,
-        input {
-            font: inherit;
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            pointer-events: none;
+            opacity: .48;
+            background-image:
+                radial-gradient(circle at 20% 20%, rgba(120, 100, 70, .055) 0 1px, transparent 1.5px),
+                radial-gradient(circle at 80% 70%, rgba(120, 100, 70, .04) 0 1px, transparent 1.5px);
+            background-size: 18px 18px, 23px 23px;
         }
 
-        button {
-            cursor: pointer;
+        body::after {
+            content: '';
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 42vw;
+            height: 100vh;
+            pointer-events: none;
+            opacity: .08;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'%3E%3Cg fill='none' stroke='%23193d4a' stroke-width='1'%3E%3Cpath d='M80 20 110 50 80 80 50 50Z M80 80 110 110 80 140 50 110Z M20 80 50 50 80 80 50 110Z M80 80 110 50 140 80 110 110Z'/%3E%3C/g%3E%3C/svg%3E");
+            background-size: 160px 160px;
+            mask-image: linear-gradient(to left, #000 0%, transparent 85%);
         }
+
+        button, input { font: inherit; }
+        button { cursor: pointer; }
 
         .shell {
-            width: min(1080px, calc(100% - 32px));
-            margin: auto;
-            padding: 42px 0 64px;
+            width: min(1120px, calc(100% - 40px));
+            margin: 0 auto;
+            padding: 54px 0 78px;
         }
 
         header {
-            display: flex;
+            display: grid;
+            grid-template-columns: minmax(0, 1.05fr) minmax(300px, .95fr);
             align-items: end;
-            justify-content: space-between;
-            gap: 24px;
-            margin-bottom: 30px;
+            gap: 48px;
+            padding: 12px 4px 40px;
         }
 
-        .eyebrow {
-            color: var(--green);
-            font: 700 12px system-ui;
-            letter-spacing: 2px;
-            text-transform: uppercase;
+        .brand-mark {
+            display: inline-flex;
+            align-items: center;
+            gap: 11px;
+            margin-bottom: 15px;
+            color: var(--gold);
+            font-family: var(--sans);
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: .22em;
         }
+
+        .brand-mark::before,
+        .brand-mark::after {
+            content: '';
+            display: block;
+            height: 1px;
+            background: currentColor;
+        }
+        .brand-mark::before { width: 24px; }
+        .brand-mark::after { width: 8px; }
 
         h1 {
-            margin: 8px 0 0;
-            font-size: clamp(2.5rem, 7vw, 5.5rem);
-            line-height: .92;
+            margin: 0;
+            max-width: 620px;
+            font-family: var(--serif);
+            font-size: clamp(3.8rem, 8vw, 6.7rem);
             font-weight: 500;
+            line-height: .88;
+            letter-spacing: -.06em;
+            text-wrap: balance;
         }
 
-        h2 {
-            margin: 0;
-            font-size: clamp(1.4rem, 3vw, 2.1rem);
-            font-weight: 500;
-        }
+        h1 em { font-style: normal; color: var(--indigo); }
 
         .intro {
-            max-width: 440px;
-            color: var(--muted);
-            line-height: 1.8;
+            position: relative;
+            margin: 0 0 7px;
+            max-width: 455px;
+            padding-left: 18px;
+            color: var(--sumi-soft);
+            font-family: var(--serif);
+            font-size: .96rem;
+            line-height: 2.05;
+        }
+        .intro::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: .45em;
+            width: 2px;
+            height: 4.4em;
+            background: linear-gradient(var(--gold), transparent);
         }
 
-        .panel {
-            border-top: 1px solid var(--ink);
-            padding-top: 22px;
+        .panel,
+        .game-wrap,
+        .history,
+        .score-rule {
+            border: 1px solid rgba(32,38,33,.11);
+            background: linear-gradient(145deg, rgba(255,255,255,.66), rgba(250,245,236,.73));
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+        }
+
+        .panel { position: relative; padding: 28px; border-radius: 26px; overflow: hidden; }
+        .panel::after {
+            content: '';
+            position: absolute;
+            left: 28px;
+            top: 0;
+            width: 78px;
+            height: 2px;
+            background: linear-gradient(90deg, var(--vermilion), var(--gold), transparent);
+        }
+
+        .panel-label {
+            margin-bottom: 19px;
+            color: var(--sumi-soft);
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: .2em;
+            text-transform: uppercase;
         }
 
         .start {
             display: grid;
-            grid-template-columns: 1fr auto;
-            gap: 12px;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 20px;
             align-items: end;
         }
 
-        .theme-field {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
+        .theme-field { display: flex; flex-direction: column; gap: 12px; }
 
         label {
             display: block;
-            margin-bottom: 8px;
-            color: var(--muted);
-            font: 700 12px system-ui;
-            letter-spacing: 1px;
+            margin-bottom: 7px;
+            color: var(--sumi-soft);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: .12em;
         }
 
         input {
             width: 100%;
-            padding: 15px 16px;
-            border: 1px solid var(--line);
-            border-radius: 4px;
-            background: #fffdf8;
-            color: var(--ink);
-            font-size: 1.05rem;
+            min-height: 58px;
+            padding: 0 18px;
+            border: 1px solid rgba(25,61,74,.18);
+            border-radius: 14px;
+            outline: none;
+            background: rgba(255,253,248,.86);
+            color: var(--sumi);
+            font-family: var(--sans);
+            font-size: 1rem;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.72);
+            transition: border-color .2s, box-shadow .2s, transform .2s;
+        }
+        input::placeholder { color: #9b9d96; }
+        input:focus {
+            border-color: rgba(25,61,74,.56);
+            box-shadow: 0 0 0 4px rgba(25,61,74,.08), inset 0 1px 0 #fff;
+            transform: translateY(-1px);
         }
 
-        .suggestions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-        }
-
+        .suggestions { display: flex; flex-wrap: wrap; gap: 8px; }
         .suggestion {
-            padding: 7px 10px;
-            border: 1px solid var(--line);
+            padding: 8px 12px;
+            border: 1px solid rgba(25,61,74,.13);
             border-radius: 999px;
-            background: rgba(255,255,255,0.58);
-            color: var(--green);
-            font: 600 12px system-ui;
+            background: rgba(255,255,255,.45);
+            color: var(--indigo);
+            font-size: 11px;
+            font-weight: 600;
+            transition: .2s ease;
         }
-
         .suggestion:hover {
-            border-color: var(--green);
-            background: rgba(35, 107, 82, 0.08);
+            border-color: rgba(167,84,67,.35);
+            background: rgba(167,84,67,.06);
+            color: var(--vermilion);
+            transform: translateY(-1px);
         }
 
+        .actions { display:flex; gap:9px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+        .primary, .secondary {
+            min-height: 50px;
+            padding: 0 18px;
+            border-radius: 13px;
+            font-size: .91rem;
+            font-weight: 700;
+            letter-spacing: .03em;
+            transition: transform .2s ease, box-shadow .2s ease, background .2s ease;
+            white-space: nowrap;
+        }
         .primary {
-            padding: 15px 25px;
-            border: 0;
-            border-radius: 4px;
-            background: var(--green);
-            color: white;
-            font-weight: 700;
-            white-space: nowrap;
+            border: 1px solid var(--indigo);
+            background: linear-gradient(180deg, #214b5a, var(--indigo-deep));
+            color: #fff;
+            box-shadow: 0 10px 22px rgba(17,45,55,.16);
         }
-
         .secondary {
-            padding: 15px 18px;
-            border: 1px solid var(--green);
-            border-radius: 4px;
-            background: #fffdf8;
-            color: var(--green);
-            font-weight: 700;
-            white-space: nowrap;
+            border: 1px solid rgba(25,61,74,.20);
+            background: rgba(255,255,255,.60);
+            color: var(--indigo);
         }
-
-        .primary:disabled {
-            opacity: .55;
-            cursor: wait;
-        }
+        .primary:hover:not(:disabled), .secondary:hover { transform: translateY(-2px); }
+        .primary:active:not(:disabled), .secondary:active { transform: translateY(0); }
+        .primary:disabled { opacity: .62; cursor: wait; }
 
         .error {
-            margin: 18px 0 0;
-            padding: 12px 14px;
-            border-left: 4px solid #a44235;
-            background: #f8dfd8;
-            color: #713126;
+            margin: 16px 0 0;
+            padding: 13px 15px;
+            border: 1px solid rgba(168,84,67,.16);
+            border-left: 3px solid var(--vermilion);
+            border-radius: 12px;
+            background: rgba(252,238,232,.76);
+            color: #7d3f33;
+            line-height: 1.6;
         }
 
+        .game-wrap { margin-top: 24px; padding: 28px; border-radius: 26px; }
         .game-head {
-            display: flex;
-            justify-content: space-between;
-            gap: 16px;
-            margin: 42px 0 18px;
+            display:flex;
+            justify-content:space-between;
+            gap:18px;
+            align-items:end;
+            margin-bottom:22px;
         }
-
-        .stats {
-            display: flex;
-            gap: 18px;
-            color: var(--muted);
-            font: 700 13px system-ui;
+        .game-kicker {
+            margin-bottom:7px;
+            color:var(--gold);
+            font-size:10px;
+            font-weight:700;
+            letter-spacing:.2em;
+            text-transform:uppercase;
         }
-
-        .board {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 12px;
+        h2 {
+            margin:0;
+            font-family:var(--serif);
+            font-size:clamp(1.7rem,3.5vw,2.45rem);
+            font-weight:500;
+            letter-spacing:-.03em;
         }
+        .stats { display:flex; gap:9px; flex-wrap:wrap; justify-content:flex-end; }
+        .stat {
+            min-width:100px;
+            padding:10px 13px;
+            border:1px solid rgba(25,61,74,.10);
+            border-radius:12px;
+            background:rgba(249,246,238,.78);
+            text-align:center;
+        }
+        .stat-label { display:block; margin-bottom:2px; color:var(--sumi-soft); font-size:9px; font-weight:700; letter-spacing:.1em; }
+        .stat-value { font-family:var(--serif); font-size:1rem; font-weight:600; }
 
+        .board { display:grid; grid-template-columns:repeat(4,1fr); gap:15px; }
         .card {
-            position: relative;
-            min-height: 142px;
-            padding: 0;
-            border: 0;
-            border-radius: 5px;
-            background: transparent;
-            perspective: 1000px;
-            color: var(--ink);
-            text-align: left;
-            box-shadow: none;
+            position:relative;
+            min-height:172px;
+            padding:0;
+            border:0;
+            border-radius:19px;
+            background:transparent;
+            perspective:1200px;
+            color:var(--sumi);
+            text-align:left;
+            transition:transform .2s ease;
         }
-
-        .card:hover:not(:disabled) {
-            transform: translateY(-3px);
-        }
-
-        .card:disabled {
-            cursor: default;
-        }
-
+        .card:hover:not(:disabled) { transform:translateY(-5px); }
+        .card:disabled { cursor:default; }
         .card-inner {
-            position: relative;
-            display: block;
-            width: 100%;
-            min-height: 142px;
-            transform-style: preserve-3d;
-            transition: transform .45s ease;
+            position:relative;
+            display:block;
+            width:100%;
+            height:172px;
+            transform-style:preserve-3d;
+            transition:transform .58s cubic-bezier(.18,.8,.18,1);
         }
-
         .card-face {
-            position: absolute;
-            inset: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 5px;
-            backface-visibility: hidden;
-            -webkit-backface-visibility: hidden;
+            position:absolute;
+            inset:0;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            border-radius:19px;
+            overflow:hidden;
+            backface-visibility:hidden;
+            -webkit-backface-visibility:hidden;
         }
 
         .card-front {
-            display: grid;
-            place-items: center;
+            border:1px solid rgba(255,255,255,.18);
             background:
-                linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,0)),
-                linear-gradient(135deg, #4f685e, #2f4c44 42%, #1d2c2a);
-            color: #eef2db;
-            font-size: 2rem;
-            box-shadow: 3px 4px 0 #1c2f2a;
-            overflow: hidden;
-            border: 1px solid rgba(167, 154, 121, 0.8);
+                linear-gradient(rgba(255,255,255,.05), rgba(255,255,255,.01)),
+                linear-gradient(145deg, #254d59, #173c48 55%, #102c35);
+            color:#efe6cc;
+            box-shadow:0 16px 30px rgba(19,40,47,.18), inset 0 1px 0 rgba(255,255,255,.08);
         }
-
+        /*
+         * 麻の葉模様を、PNG等の画像ではなくSVGの幾何学として描画。
+         * 正三角形の格子を基準に、60°刻みの線分を反復することで
+         * 六角形の「麻の葉」モチーフを構成しています。
+         */
         .card-front::before {
-            content: "";
-            position: absolute;
-            inset: 10px;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cg fill='none' stroke='rgba(236,230,206,0.42)' stroke-width='1.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M60 18 L90 48 L60 78 L30 48 Z'/%3E%3Cpath d='M60 42 L90 72 L60 102 L30 72 Z'/%3E%3Cpath d='M18 60 L48 30 L78 60 L48 90 Z'/%3E%3Cpath d='M42 60 L60 42 L78 60 L60 78 Z'/%3E%3Cpath d='M60 18 L60 102 M18 60 L102 60'/%3E%3Cpath d='M12 12 L24 24 M108 12 L96 24 M12 108 L24 96 M108 108 L96 96'/%3E%3C/g%3E%3C/svg%3E");
-            background-size: 90px 90px;
-            background-repeat: repeat;
-            background-position: center;
-            opacity: 0.95;
+            content:'';
+            position:absolute;
+            inset:11px;
+            border:1px solid rgba(231,218,181,.24);
+            border-radius:14px;
+            background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Cg fill='none' stroke='%23e8ddbd' stroke-opacity='.30' stroke-width='1' stroke-linecap='round' stroke-linejoin='round'%3E%3C!-- equilateral-triangle lattice --%3E%3Cpath d='M0 0H96 M0 48H96 M0 96H96 M0 0L83.14 48L0 96 M13.86 0L96 47.43L13.86 96 M82.14 0L0 48.57L82.14 96 M96 0L12.86 48L96 96'/%3E%3C!-- central six-fold leaf geometry --%3E%3Cpath d='M48 6L69 18L69 42L48 54L27 42L27 18Z M48 42L69 54L69 78L48 90L27 78L27 54Z M6 27L27 39L48 27L69 39L90 27 M6 69L27 57L48 69L69 57L90 69'/%3E%3C!-- diagonals that form the characteristic pointed leaves --%3E%3Cpath d='M48 6L48 42 M48 54L48 90 M27 18L48 30L69 18 M27 78L48 66L69 78 M27 42L48 30L69 42 M27 54L48 66L69 54'/%3E%3C/g%3E%3C/svg%3E");
+            background-size:96px 96px;
+            background-position:center;
         }
-
         .card-front::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            background:
-                linear-gradient(90deg, rgba(255,255,255,0.08), transparent 18%, transparent 82%, rgba(255,255,255,0.08)),
-                linear-gradient(180deg, rgba(255,255,255,0.06), transparent 18%, transparent 82%, rgba(255,255,255,0.06));
-            pointer-events: none;
+            content:'';
+            position:absolute;
+            inset:0;
+            pointer-events:none;
+            background:radial-gradient(circle at center, rgba(255,255,255,.045), transparent 22%);
         }
 
         .card-back {
-            padding: 16px;
-            border: 1px solid #d5c9a5;
+            padding:20px;
+            border:1px solid rgba(183,144,69,.28);
             background:
-                linear-gradient(180deg, rgba(255,255,255,.38), rgba(255,255,255,0)),
-                repeating-linear-gradient(
-                    0deg,
-                    #f9f5ee 0,
-                    #f9f5ee 20px,
-                    #f4ebd9 20px,
-                    #f4ebd9 40px
-                );
-            color: var(--ink);
-            text-align: center;
-            justify-content: center;
-            box-shadow: 3px 4px 0 #d0c2a1;
-            transform: rotateY(180deg);
+                radial-gradient(circle at 18% 0%, rgba(255,255,255,.75), transparent 25%),
+                linear-gradient(145deg,#fffdf8,#f6efe1);
+            color:var(--sumi);
+            text-align:center;
+            box-shadow:0 14px 28px rgba(75,63,43,.09), inset 0 0 0 1px rgba(255,255,255,.62);
+            transform:rotateY(180deg);
         }
-
-        .card.flipped .card-inner,
-        .card.selected .card-inner,
-        .card.matched .card-inner {
-            transform: rotateY(180deg);
+        .card-back::before {
+            content:'';
+            position:absolute;
+            top:12px;
+            left:12px;
+            width:12px;
+            height:12px;
+            border-top:1px solid var(--gold);
+            border-left:1px solid var(--gold);
+            opacity:.7;
+        }
+        .card-back::after {
+            content:'';
+            position:absolute;
+            right:12px;
+            bottom:12px;
+            width:12px;
+            height:12px;
+            border-right:1px solid var(--gold);
+            border-bottom:1px solid var(--gold);
+            opacity:.7;
         }
 
         .card.selected .card-back {
-            outline: 3px solid var(--gold);
-            background: #fff4c9;
+            border-color:rgba(167,84,67,.60);
+            box-shadow:0 0 0 3px rgba(167,84,67,.10), 0 18px 32px rgba(81,65,29,.11);
         }
-
         .card.matched .card-back {
-            border-color: rgba(32, 62, 53, 0.65);
-            background:
-                linear-gradient(180deg, rgba(255,255,255,.16), rgba(255,255,255,0)),
-                linear-gradient(135deg, #b8c8b8, #9aa998 46%, #7d8a7a);
-            box-shadow: inset 0 0 0 1px rgba(30, 48, 42, 0.15);
-            color: rgba(22, 33, 28, 0.88);
+            border-color:rgba(83,107,79,.42);
+            background:linear-gradient(145deg,#e2e8dc,#cfdac9);
+            box-shadow:inset 0 0 0 1px rgba(83,107,79,.08), 0 14px 26px rgba(60,77,54,.08);
         }
-
-        .card.matched .card-number {
-            color: rgba(96, 86, 40, 0.84);
-        }
-
-        .card-number {
-            display: block;
-            margin-bottom: 15px;
-            color: var(--gold);
-            font: 700 12px system-ui;
-        }
+        .card.flipped .card-inner, .card.selected .card-inner, .card.matched .card-inner { transform:rotateY(180deg); }
 
         .card-text {
-            display: block;
-            width: 100%;
-            font-size: 1rem;
-            line-height: 1.55;
-            text-align: center;
+            display:block;
+            width:100%;
+            font-family:var(--serif);
+            font-size:clamp(.96rem,1.65vw,1.08rem);
+            line-height:1.75;
+            font-weight:600;
         }
 
         .message {
-            min-height: 28px;
-            margin: 17px 0;
-            color: var(--green);
-            font-weight: 700;
+            min-height:26px;
+            margin:18px 2px 0;
+            color:var(--indigo);
+            font-family:var(--serif);
+            font-size:.91rem;
+            font-weight:600;
         }
 
         .clear {
-            padding: 23px;
-            border: 1px solid var(--gold);
-            background: #fff4c9;
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:18px;
+            margin-top:18px;
+            padding:18px 20px;
+            border:1px solid rgba(183,144,69,.45);
+            border-radius:17px;
+            background:linear-gradient(135deg,rgba(255,249,227,.96),rgba(249,240,209,.75));
         }
-
-        .clear strong {
-            display: block;
-            margin-bottom: 6px;
-            font-size: 1.5rem;
-        }
+        .clear-copy strong { display:block; margin-bottom:3px; font-family:var(--serif); font-size:1.27rem; font-weight:600; }
+        .clear-copy span { color:var(--sumi-soft); }
 
         .score-rule {
-            margin-top: 36px;
-            padding: 14px 16px;
-            border: 1px solid var(--line);
-            background: rgba(255,255,255,0.4);
-            color: var(--muted);
-            font: 13px/1.7 system-ui;
+            position:relative;
+            margin-top:24px;
+            padding:19px 20px 19px 22px;
+            border-radius:18px;
+            color:var(--sumi-soft);
+            font-size:.84rem;
+            line-height:1.85;
+        }
+        .score-rule::before {
+            content:'○';
+            position:absolute;
+            left:3px;
+            top:15px;
+            color:var(--gold);
+            font-family:var(--serif);
+            font-size:1rem;
+        }
+        .score-rule strong { color:var(--sumi); }
+
+        .history { margin-top:24px; padding:24px 26px; border-radius:24px; }
+        .history-header { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-bottom:10px; }
+        .history-title { margin:0; font-family:var(--serif); font-size:1.55rem; font-weight:500; }
+        .history-list { display:grid; grid-template-columns:repeat(2,1fr); gap:0 24px; margin:0; padding:0; list-style:none; }
+        .history-list li { display:flex; justify-content:space-between; gap:16px; padding:13px 0; border-bottom:1px solid var(--line); color:var(--sumi-soft); font-size:.9rem; }
+        .history-list li strong { color:var(--sumi); white-space:nowrap; font-family:var(--serif); }
+
+        @media (max-width: 860px) {
+            .shell { width:min(100% - 28px,720px); }
+            header { grid-template-columns:1fr; gap:20px; padding-bottom:30px; }
+            .intro { max-width:620px; }
+            .start { grid-template-columns:1fr; }
+            .actions { justify-content:flex-start; }
+            .game-head { align-items:flex-start; flex-direction:column; }
+            .stats { justify-content:flex-start; }
+            .clear { align-items:flex-start; flex-direction:column; }
+            .history-list { grid-template-columns:1fr; }
         }
 
-        .score-rule strong {
-            color: var(--ink);
-            font-weight: 700;
+        @media (max-width: 620px) {
+            .shell { width:min(100% - 20px,560px); padding:30px 0 48px; }
+            header { padding:4px 1px 24px; }
+            h1 { font-size:clamp(3.1rem,16vw,4.5rem); }
+            .panel,.game-wrap,.history { padding:18px; border-radius:19px; }
+            .panel::after { left:18px; }
+            .board { grid-template-columns:repeat(2,1fr); gap:10px; }
+            .card { min-height:148px; }
+            .card-inner { height:148px; }
+            .card-text { font-size:.92rem; }
+            .primary,.secondary { flex:1; }
+            .actions { width:100%; }
+            .stats { width:100%; }
+            .stat { flex:1; min-width:0; }
         }
 
-        .history {
-            margin-top: 48px;
-        }
-
-        .history h2 {
-            margin-bottom: 12px;
-        }
-
-        .history-list {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 8px 24px;
-            padding: 0;
-            list-style: none;
-        }
-
-        .history-list li {
-            display: flex;
-            justify-content: space-between;
-            padding: 10px 0;
-            border-bottom: 1px solid var(--line);
-            color: var(--muted);
-            font: 14px system-ui;
-        }
-
-        @media (max-width:680px) {
-            .shell {
-                padding-top: 26px;
-            }
-
-            header {
-                display: block;
-            }
-
-            .intro {
-                margin-top: 20px;
-            }
-
-            .start {
-                grid-template-columns: 1fr;
-            }
-
-            .board {
-                grid-template-columns: repeat(2, 1fr);
-                gap: 9px;
-            }
-
-            .card {
-                min-height: 150px;
-            }
-
-            .game-head {
-                display: block;
-            }
-
-            .stats {
-                margin-top: 10px;
-            }
-
-            .history-list {
-                grid-template-columns: 1fr;
-            }
+        @media (prefers-reduced-motion: reduce) {
+            *,*::before,*::after { scroll-behavior:auto !important; transition-duration:.01ms !important; animation-duration:.01ms !important; }
         }
     </style>
 </head>
@@ -421,53 +510,93 @@
     <main id="app" class="shell">
         <header>
             <div>
-                <div class="eyebrow">Quiz memory game</div>
-                <h1>ことば<br>合わせ</h1>
+                <div class="brand-mark">Quiz memory game</div>
+                <h1>ことば<br><em>合わせ</em></h1>
             </div>
-            <p class="intro">同じ答えにつながる、異なる2つの問題を探そう。テーマを決めると、AIが16枚のカードを用意します。</p>
+            <p class="intro">同じ答えにつながる、異なる2つの問題を探そう。テーマを決めると、AIが16枚のカードを用意します。知識とひらめきで、8組のペアを完成させよう。</p>
         </header>
+
         <section class="panel">
+            <div class="panel-label">Start a new game</div>
             <div class="start">
                 <div class="theme-field">
-                    <div><label for="theme">今日のテーマ</label><input id="theme" v-model.trim="theme" maxlength="50"
-                            @keyup.enter="startGame" placeholder="例：日本の歴史、宇宙、動物"></div>
+                    <div>
+                        <label for="theme">今日のテーマ</label>
+                        <input id="theme" v-model.trim="theme" maxlength="50"
+                            @keyup.enter="startGame" placeholder="例：日本の歴史、宇宙、動物">
+                    </div>
                     <div class="suggestions" aria-label="テーマ候補">
                         <button v-for="item in themeSuggestions" :key="item" type="button" class="suggestion"
                             @click="setTheme(item)">{{ item }}</button>
                     </div>
                 </div>
-                <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; justify-content:flex-end;">
+                <div class="actions">
                     <button class="secondary" type="button" @click="randomTheme">お任せ</button>
-                    <button class="primary" @click="startGame" :disabled="loading || !theme">{{ loading ? 'カードを準備中...' : 'ゲームを始める' }}</button>
+                    <button class="primary" @click="startGame" :disabled="loading || !theme">
+                        {{ loading ? 'カードを準備中…' : 'ゲームを始める' }}
+                    </button>
                 </div>
             </div>
             <p v-if="error" class="error" role="alert">{{ error }}</p>
         </section>
-        <section v-if="cards.length" aria-live="polite">
+
+        <section v-if="cards.length" class="game-wrap" aria-live="polite">
             <div class="game-head">
-                <h2>テーマ：{{ currentTheme }}</h2>
-                <div class="stats"><span>手数 {{ moves }}</span><span>ペア {{ matched.size / 2 }} / 8</span></div>
+                <div>
+                    <div class="game-kicker">Now playing</div>
+                    <h2>{{ currentTheme }}</h2>
+                </div>
+                <div class="stats">
+                    <div class="stat">
+                        <span class="stat-label">手数</span>
+                        <span class="stat-value">{{ moves }}</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">ペア</span>
+                        <span class="stat-value">{{ matched.size / 2 }} / 8</span>
+                    </div>
+                </div>
             </div>
-            <div class="board"><button v-for="card in cards" :key="card.id" class="card"
+
+            <div class="board">
+                <button v-for="card in cards" :key="card.id" class="card"
                     :class="{ flipped: isVisible(card), selected: selected.includes(card.id), matched: matched.has(card.id) }"
-                    :disabled="isDisabled(card)" @click="selectCard(card)"><span class="card-inner"><span
-                            class="card-face card-front">＋</span><span class="card-face card-back"><span
-                                class="card-text">{{ card.text }}</span></span></span></button></div>
+                    :disabled="isDisabled(card)" @click="selectCard(card)">
+                    <span class="card-inner">
+                        <span class="card-face card-front" aria-hidden="true"></span>
+                        <span class="card-face card-back">
+                            <span class="card-text">{{ card.text }}</span>
+                        </span>
+                    </span>
+                </button>
+            </div>
+
             <p class="message">{{ message }}</p>
-            <div v-if="cleared" class="clear"><strong>ゲームクリア</strong><span>{{ moves }}手で完成。スコア {{ score }}
-                    点</span><br><button class="primary" style="margin-top:14px" @click="startGame">もう一度遊ぶ</button></div>
+
+            <div v-if="cleared" class="clear">
+                <div class="clear-copy">
+                    <strong>ゲームクリア</strong>
+                    <span>{{ moves }}手で完成。スコア {{ score }} 点</span>
+                </div>
+                <button class="primary" @click="startGame">もう一度遊ぶ</button>
+            </div>
         </section>
+
         <section class="score-rule">
             <strong>点数の計算ルール</strong><br>
             1回のペア判定で手数が1増え、8組すべてを揃えるとクリアです。<br>
-            スコアは <strong>max(0, 1000 - (手数 - 10) × 30)</strong> で計算されます。<br>
-            つまり、手数が少ないほど高得点になり、少なくとも 0 点まで下がります。
+            スコアは <strong>max(0, 1000 - (手数 - 10) × 30)</strong> で計算されます。手数が少ないほど高得点になります。
         </section>
+
         <section v-if="history.length" class="history">
-            <h2>プレイ履歴</h2>
+            <div class="history-header">
+                <h2 class="history-title">プレイ履歴</h2>
+            </div>
             <ul class="history-list">
-                <li v-for="item in history" :key="item.game_id"><span>{{ item.theme }}</span><strong>{{ item.score }} 点
-                        / {{ item.moves }}手</strong></li>
+                <li v-for="item in history" :key="item.game_id">
+                    <span>{{ item.theme }}</span>
+                    <strong>{{ item.score }} 点 / {{ item.moves }}手</strong>
+                </li>
             </ul>
         </section>
     </main>
@@ -519,5 +648,4 @@
         }).mount('#app');
     </script>
 </body>
-
 </html>
