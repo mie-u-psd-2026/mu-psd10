@@ -585,7 +585,7 @@
         <section class="score-rule">
             <strong>点数の計算ルール</strong><br>
             1回のペア判定で手数が1増え、8組すべてを揃えるとクリアです。<br>
-            スコアは <strong>max(0, 1000 - (手数 - 10) × 30)</strong> で計算されます。手数が少ないほど高得点になります。
+            スコアは <strong>1000 - (手数 - 10) × 30)</strong> で計算されます。手数が少ないほど高得点になります。
         </section>
 
         <section v-if="history.length" class="history">
@@ -642,7 +642,7 @@
                 async request(url, payload) { const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || '処理に失敗しました。'); return data; },
                 async startGame() { if (!this.theme || this.loading) return; this.loading = true; this.error = ''; this.cards = []; try { const data = await this.request('/generate_game', { theme: this.theme }); this.currentTheme = this.theme; this.gameId = data.game_id; this.cards = data.cards; this.selected = []; this.matched = new Set(); this.moves = 0; this.cleared = false; this.message = 'カードを2枚選んでください。'; } catch (error) { this.error = error.message; } finally { this.loading = false; } },
                 isVisible(card) { return this.matched.has(card.id) || this.selected.includes(card.id); }, isDisabled(card) { return this.cleared || this.matched.has(card.id) || this.selected.includes(card.id) || this.selected.length >= 2; },
-                async selectCard(card) { if (this.isDisabled(card)) return; this.selected.push(card.id); if (this.selected.length !== 2) { this.message = 'もう1枚選んでください。'; return; } const chosen = [...this.selected]; try { const result = await this.request('/check_pair', { game_id: this.gameId, card_ids: chosen }); this.moves = result.moves; if (result.is_pair) { chosen.forEach(id => this.matched.add(id)); this.message = `ペア成立：${result.answer}`; this.cleared = result.game_cleared; if (this.cleared) { this.score = result.score; await this.loadHistory(); } this.selected = []; } else { this.message = '不成立。カードを裏返します。'; setTimeout(() => { this.selected = []; this.message = 'カードを2枚選んでください。'; }, 800); } } catch (error) { this.error = error.message; this.selected = []; } },
+                async selectCard(card) { if (this.isDisabled(card)) return; this.selected.push(card.id); if (this.selected.length !== 2) { this.message = 'もう1枚選んでください。'; return; } const chosen = [...this.selected]; try { const result = await this.request('/check_pair', { game_id: this.gameId, card_ids: chosen }); this.moves = result.moves; if (result.is_pair) { chosen.forEach(id => this.matched.add(id)); this.message = `ペア成立：${result.answer}`; this.cleared = result.game_cleared; if (this.cleared) { this.score = result.score; await this.loadHistory(); } this.selected = []; } else { this.message = '不成立。カードを裏返します。'; setTimeout(() => { this.selected = []; this.message = 'カードを2枚選んでください。'; }, 1400); } } catch (error) { this.error = error.message; this.selected = []; } },
                 async loadHistory() { try { const response = await fetch('/game_history'); const data = await response.json(); this.history = data.history || []; } catch (_) { this.history = []; } }
             }
         }).mount('#app');
