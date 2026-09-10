@@ -193,19 +193,52 @@
         .card-front {
             display: grid;
             place-items: center;
-            background: var(--green);
+            background:
+                linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,0)),
+                linear-gradient(135deg, #4f685e, #2f4c44 42%, #1d2c2a);
             color: #eef2db;
             font-size: 2rem;
-            box-shadow: 3px 4px 0 #174735;
+            box-shadow: 3px 4px 0 #1c2f2a;
+            overflow: hidden;
+            border: 1px solid rgba(167, 154, 121, 0.8);
+        }
+
+        .card-front::before {
+            content: "";
+            position: absolute;
+            inset: 10px;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cg fill='none' stroke='rgba(236,230,206,0.42)' stroke-width='1.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M60 18 L90 48 L60 78 L30 48 Z'/%3E%3Cpath d='M60 42 L90 72 L60 102 L30 72 Z'/%3E%3Cpath d='M18 60 L48 30 L78 60 L48 90 Z'/%3E%3Cpath d='M42 60 L60 42 L78 60 L60 78 Z'/%3E%3Cpath d='M60 18 L60 102 M18 60 L102 60'/%3E%3Cpath d='M12 12 L24 24 M108 12 L96 24 M12 108 L24 96 M108 108 L96 96'/%3E%3C/g%3E%3C/svg%3E");
+            background-size: 90px 90px;
+            background-repeat: repeat;
+            background-position: center;
+            opacity: 0.95;
+        }
+
+        .card-front::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background:
+                linear-gradient(90deg, rgba(255,255,255,0.08), transparent 18%, transparent 82%, rgba(255,255,255,0.08)),
+                linear-gradient(180deg, rgba(255,255,255,0.06), transparent 18%, transparent 82%, rgba(255,255,255,0.06));
+            pointer-events: none;
         }
 
         .card-back {
             padding: 16px;
             border: 1px solid #d5c9a5;
-            background: #fffdf8;
+            background:
+                linear-gradient(180deg, rgba(255,255,255,.38), rgba(255,255,255,0)),
+                repeating-linear-gradient(
+                    0deg,
+                    #f9f5ee 0,
+                    #f9f5ee 20px,
+                    #f4ebd9 20px,
+                    #f4ebd9 40px
+                );
             color: var(--ink);
             text-align: left;
-            box-shadow: 3px 4px 0 #ded4b9;
+            box-shadow: 3px 4px 0 #d0c2a1;
             transform: rotateY(180deg);
         }
 
