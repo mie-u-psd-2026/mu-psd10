@@ -88,6 +88,12 @@
             align-items: end;
         }
 
+        .theme-field {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
         label {
             display: block;
             margin-bottom: 8px;
@@ -106,12 +112,42 @@
             font-size: 1.05rem;
         }
 
+        .suggestions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .suggestion {
+            padding: 7px 10px;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            background: rgba(255,255,255,0.58);
+            color: var(--green);
+            font: 600 12px system-ui;
+        }
+
+        .suggestion:hover {
+            border-color: var(--green);
+            background: rgba(35, 107, 82, 0.08);
+        }
+
         .primary {
             padding: 15px 25px;
             border: 0;
             border-radius: 4px;
             background: var(--green);
             color: white;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .secondary {
+            padding: 15px 18px;
+            border: 1px solid var(--green);
+            border-radius: 4px;
+            background: #fffdf8;
+            color: var(--green);
             font-weight: 700;
             white-space: nowrap;
         }
@@ -254,9 +290,16 @@
         }
 
         .card.matched .card-back {
-            border-color: var(--green);
-            background: #dcebd5;
-            box-shadow: none;
+            border-color: rgba(32, 62, 53, 0.65);
+            background:
+                linear-gradient(180deg, rgba(255,255,255,.16), rgba(255,255,255,0)),
+                linear-gradient(135deg, #b8c8b8, #9aa998 46%, #7d8a7a);
+            box-shadow: inset 0 0 0 1px rgba(30, 48, 42, 0.15);
+            color: rgba(22, 33, 28, 0.88);
+        }
+
+        .card.matched .card-number {
+            color: rgba(96, 86, 40, 0.84);
         }
 
         .card-number {
@@ -367,9 +410,18 @@
         </header>
         <section class="panel">
             <div class="start">
-                <div><label for="theme">今日のテーマ</label><input id="theme" v-model.trim="theme" maxlength="50"
-                        @keyup.enter="startGame" placeholder="例：日本の歴史、宇宙、動物"></div><button class="primary"
-                    @click="startGame" :disabled="loading || !theme">{{ loading ? 'カードを準備中...' : 'ゲームを始める' }}</button>
+                <div class="theme-field">
+                    <div><label for="theme">今日のテーマ</label><input id="theme" v-model.trim="theme" maxlength="50"
+                            @keyup.enter="startGame" placeholder="例：日本の歴史、宇宙、動物"></div>
+                    <div class="suggestions" aria-label="テーマ候補">
+                        <button v-for="item in themeSuggestions" :key="item" type="button" class="suggestion"
+                            @click="setTheme(item)">{{ item }}</button>
+                    </div>
+                </div>
+                <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; justify-content:flex-end;">
+                    <button class="secondary" type="button" @click="randomTheme">お任せ</button>
+                    <button class="primary" @click="startGame" :disabled="loading || !theme">{{ loading ? 'カードを準備中...' : 'ゲームを始める' }}</button>
+                </div>
             </div>
             <p v-if="error" class="error" role="alert">{{ error }}</p>
         </section>
@@ -399,8 +451,42 @@
     <script>
         const { createApp } = Vue;
         createApp({
-            data() { return { theme: '', currentTheme: '', cards: [], selected: [], matched: new Set(), gameId: '', moves: 0, score: 0, cleared: false, loading: false, error: '', message: 'カードを2枚選んでください。', history: [] }; }, mounted() { this.loadHistory(); },
+            data() {
+                return {
+                    theme: '',
+                    currentTheme: '',
+                    cards: [],
+                    selected: [],
+                    matched: new Set(),
+                    gameId: '',
+                    moves: 0,
+                    score: 0,
+                    cleared: false,
+                    loading: false,
+                    error: '',
+                    message: 'カードを2枚選んでください。',
+                    history: [],
+                    themeSuggestions: [
+                        '日本の歴史',
+                        '宇宙',
+                        '動物',
+                        '食文化',
+                        '夏祭り',
+                        '文学',
+                        '科学',
+                        '季節',
+                        'スポーツ',
+                        '街と建物'
+                    ]
+                };
+            },
+            mounted() { this.loadHistory(); },
             methods: {
+                setTheme(value) { this.theme = value; },
+                randomTheme() {
+                    const randomIndex = Math.floor(Math.random() * this.themeSuggestions.length);
+                    this.theme = this.themeSuggestions[randomIndex];
+                },
                 async request(url, payload) { const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const data = await response.json(); if (!response.ok) throw new Error(data.error || '処理に失敗しました。'); return data; },
                 async startGame() { if (!this.theme || this.loading) return; this.loading = true; this.error = ''; this.cards = []; try { const data = await this.request('/generate_game', { theme: this.theme }); this.currentTheme = this.theme; this.gameId = data.game_id; this.cards = data.cards; this.selected = []; this.matched = new Set(); this.moves = 0; this.cleared = false; this.message = 'カードを2枚選んでください。'; } catch (error) { this.error = error.message; } finally { this.loading = false; } },
                 isVisible(card) { return this.matched.has(card.id) || this.selected.includes(card.id); }, isDisabled(card) { return this.cleared || this.matched.has(card.id) || this.selected.includes(card.id) || this.selected.length >= 2; },
