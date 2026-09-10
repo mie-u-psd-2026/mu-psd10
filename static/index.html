@@ -150,15 +150,16 @@
         }
 
         .card {
+            position: relative;
             min-height: 142px;
-            padding: 16px;
-            border: 1px solid #d5c9a5;
+            padding: 0;
+            border: 0;
             border-radius: 5px;
-            background: #fffdf8;
+            background: transparent;
+            perspective: 1000px;
             color: var(--ink);
             text-align: left;
-            box-shadow: 3px 4px 0 #ded4b9;
-            transition: transform .15s;
+            box-shadow: none;
         }
 
         .card:hover:not(:disabled) {
@@ -169,7 +170,27 @@
             cursor: default;
         }
 
-        .card.back {
+        .card-inner {
+            position: relative;
+            display: block;
+            width: 100%;
+            min-height: 142px;
+            transform-style: preserve-3d;
+            transition: transform .45s ease;
+        }
+
+        .card-face {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 5px;
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+        }
+
+        .card-front {
             display: grid;
             place-items: center;
             background: var(--green);
@@ -178,12 +199,28 @@
             box-shadow: 3px 4px 0 #174735;
         }
 
-        .card.selected {
+        .card-back {
+            padding: 16px;
+            border: 1px solid #d5c9a5;
+            background: #fffdf8;
+            color: var(--ink);
+            text-align: left;
+            box-shadow: 3px 4px 0 #ded4b9;
+            transform: rotateY(180deg);
+        }
+
+        .card.flipped .card-inner,
+        .card.selected .card-inner,
+        .card.matched .card-inner {
+            transform: rotateY(180deg);
+        }
+
+        .card.selected .card-back {
             outline: 3px solid var(--gold);
             background: #fff4c9;
         }
 
-        .card.matched {
+        .card.matched .card-back {
             border-color: var(--green);
             background: #dcebd5;
             box-shadow: none;
@@ -309,10 +346,11 @@
                 <div class="stats"><span>手数 {{ moves }}</span><span>ペア {{ matched.size / 2 }} / 8</span></div>
             </div>
             <div class="board"><button v-for="card in cards" :key="card.id" class="card"
-                    :class="{ back: !isVisible(card), selected: selected.includes(card.id), matched: matched.has(card.id) }"
-                    :disabled="isDisabled(card)" @click="selectCard(card)"><template v-if="isVisible(card)"><span
-                            class="card-number">CARD {{ String(card.id).padStart(2, '0') }}</span><span
-                            class="card-text">{{ card.text }}</span></template><span v-else>＋</span></button></div>
+                    :class="{ flipped: isVisible(card), selected: selected.includes(card.id), matched: matched.has(card.id) }"
+                    :disabled="isDisabled(card)" @click="selectCard(card)"><span class="card-inner"><span
+                            class="card-face card-front">＋</span><span class="card-face card-back"><span
+                                class="card-number">CARD {{ String(card.id).padStart(2, '0') }}</span><span
+                                class="card-text">{{ card.text }}</span></span></span></button></div>
             <p class="message">{{ message }}</p>
             <div v-if="cleared" class="clear"><strong>ゲームクリア</strong><span>{{ moves }}手で完成。スコア {{ score }}
                     点</span><br><button class="primary" style="margin-top:14px" @click="startGame">もう一度遊ぶ</button></div>
