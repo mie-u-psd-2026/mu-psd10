@@ -273,7 +273,8 @@
                     #f4ebd9 40px
                 );
             color: var(--ink);
-            text-align: left;
+            text-align: center;
+            justify-content: center;
             box-shadow: 3px 4px 0 #d0c2a1;
             transform: rotateY(180deg);
         }
@@ -310,8 +311,11 @@
         }
 
         .card-text {
+            display: block;
+            width: 100%;
             font-size: 1rem;
             line-height: 1.55;
+            text-align: center;
         }
 
         .message {
@@ -331,6 +335,20 @@
             display: block;
             margin-bottom: 6px;
             font-size: 1.5rem;
+        }
+
+        .score-rule {
+            margin-top: 36px;
+            padding: 14px 16px;
+            border: 1px solid var(--line);
+            background: rgba(255,255,255,0.4);
+            color: var(--muted);
+            font: 13px/1.7 system-ui;
+        }
+
+        .score-rule strong {
+            color: var(--ink);
+            font-weight: 700;
         }
 
         .history {
@@ -434,11 +452,16 @@
                     :class="{ flipped: isVisible(card), selected: selected.includes(card.id), matched: matched.has(card.id) }"
                     :disabled="isDisabled(card)" @click="selectCard(card)"><span class="card-inner"><span
                             class="card-face card-front">＋</span><span class="card-face card-back"><span
-                                class="card-number">CARD {{ String(card.id).padStart(2, '0') }}</span><span
                                 class="card-text">{{ card.text }}</span></span></span></button></div>
             <p class="message">{{ message }}</p>
             <div v-if="cleared" class="clear"><strong>ゲームクリア</strong><span>{{ moves }}手で完成。スコア {{ score }}
                     点</span><br><button class="primary" style="margin-top:14px" @click="startGame">もう一度遊ぶ</button></div>
+        </section>
+        <section class="score-rule">
+            <strong>点数の計算ルール</strong><br>
+            1回のペア判定で手数が1増え、8組すべてを揃えるとクリアです。<br>
+            スコアは <strong>max(0, 1000 - (手数 - 10) × 30)</strong> で計算されます。<br>
+            つまり、手数が少ないほど高得点になり、少なくとも 0 点まで下がります。
         </section>
         <section v-if="history.length" class="history">
             <h2>プレイ履歴</h2>
